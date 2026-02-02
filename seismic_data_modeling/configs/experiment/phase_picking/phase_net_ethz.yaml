@@ -1,0 +1,33 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adam_phasenet
+  - /model: phase_net
+
+experiment_name: phase_net_ethz
+
+train:
+  monitor: val/loss
+  mode: min
+
+dataset:
+  sample_len: 3001
+  bits: 0
+  d_data: 3
+
+encoder:
+  _name_: dummy
+
+decoder:
+  _name_: dummy
+
+loader:
+  batch_size: 256
+
+trainer:
+  max_epochs: 100
+

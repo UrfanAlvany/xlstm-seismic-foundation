@@ -1,0 +1,658 @@
+================================================================================
+                    ENCODER ARCHITECTURES DETAILED EXPLANATION
+================================================================================
+
+Author: Technical Documentation for Thesis
+Date: 2025-11-09
+Models: ConvDownEncoderContrastive & BidirAutoregEncoder
+
+This document provides a complete, step-by-step explanation of how both encoder
+architectures work, including input/output shapes, operations, and purposes.
+
+================================================================================
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    1. CONVDOWN ENCODER (CONTRASTIVE)                       ║
+║                     Wav2Vec2-Style Pretraining                             ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+PURPOSE:
+--------
+The ConvDownEncoderContrastive is designed for self-supervised contrastive
+pretraining following the Wav2Vec2 framework (Baevski et al., 2020). It
+processes raw seismic waveforms and creates two parallel outputs:
+  1. Masked features → fed to the U-Net context encoder
+  2. Quantized targets → used for contrastive loss computation
+
+
+ARCHITECTURE OVERVIEW:
+---------------------
+Input: Raw 3-channel seismic waveform
+  └─> Convolutional feature extraction (4× downsampling)
+      └─> Split into two paths:
+          ├─> Path A: Masking → to U-Net backbone
+          └─> Path B: Vector Quantization → contrastive targets
+
+
+STEP-BY-STEP DATA FLOW:
+-----------------------
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 1: INPUT                                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Input Shape: (B, L, C)
+  - B = Batch size
+  - L = Sequence length (e.g., 4096 samples at 100Hz = 40.96 seconds)
+  - C = Input channels (always 3 for seismic: Z, N, E components)
+
+Example: (32, 4096, 3)
+  → 32 waveforms, 4096 timesteps each, 3 channels
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: CONVOLUTIONAL LAYER 1                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Conv1d(in_channels=3, out_channels=256, kernel_size=3, stride=2)
+
+What it does:
+  - Temporal convolution with kernel size 3
+  - Stride 2 → DOWNSAMPLES by 2× (4096 → 2048)
+  - Expands channels from 3 → 256 (feature extraction)
+  - Padding=1 to preserve temporal structure
+
+Mathematical operation:
+  For each output position t:
+    output[t] = Σ(weight[k] * input[2*t - 1 + k]) for k in {0,1,2}
+
+Output Shape: (B, L/2, 256)
+Example: (32, 2048, 256)
+
+WHY?
+  - Captures local temporal patterns (3-sample window)
+  - Reduces computational cost (2× fewer timesteps)
+  - Projects to higher-dimensional feature space
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 3: LAYER NORMALIZATION                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: LayerNorm(normalized_shape=256)
+
+What it does:
+  - Normalizes features across the 256 channels
+  - For each (batch, time) position, normalize the 256 features:
+      x_normalized = (x - μ) / σ
+  - Stabilizes training (prevents internal covariate shift)
+  - Learnable scale (γ) and shift (β) parameters
+
+Output Shape: (B, 2048, 256) [same shape, normalized values]
+
+WHY?
+  - Essential for deep network training stability
+  - Allows higher learning rates
+  - Prevents gradient explosion/vanishing
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 4: GELU ACTIVATION                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: GELU (Gaussian Error Linear Unit)
+
+Formula: GELU(x) = x * Φ(x)
+  where Φ(x) is the cumulative distribution function of standard normal
+
+Approximation: GELU(x) ≈ 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
+
+What it does:
+  - Smooth, non-linear activation function
+  - Similar to ReLU but with smooth gradient
+  - Allows small negative values (unlike ReLU which zeros them)
+
+Output Shape: (B, 2048, 256) [same shape, non-linear transformation]
+
+WHY?
+  - Better gradient flow than ReLU
+  - Works well with normalization
+  - Used in BERT, GPT, and modern transformers
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 5: CONVOLUTIONAL LAYER 2                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Conv1d(in_channels=256, out_channels=256, kernel_size=3, stride=2)
+
+What it does:
+  - Another temporal convolution
+  - Stride 2 → DOWNSAMPLES by 2× again (2048 → 1024)
+  - Maintains 256 channels
+  - Dilation=1 (can be configured to >1 for wider receptive field)
+
+Output Shape: (B, L/4, 256)
+Example: (32, 1024, 256)
+
+TOTAL DOWNSAMPLING SO FAR: 4× (4096 → 1024)
+
+WHY?
+  - Further abstracts features
+  - Captures longer-range temporal patterns
+  - Reduces sequence length for computational efficiency
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 6: LAYER NORMALIZATION + GELU                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Same as Steps 3 and 4, applied to the new 256-dimensional features
+
+Output Shape: (B, 1024, 256)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 7: FINAL LAYER NORMALIZATION                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: LayerNorm(normalized_shape=256)
+
+This produces: x_normalized (B, 1024, 256)
+
+This is the SHARED representation used by BOTH paths below!
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          BRANCHING POINT                                │
+│                                                                         │
+│  x_normalized splits into TWO PATHS:                                   │
+│  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │
+│  │  PATH A: MASKING         │  │  PATH B: VECTOR QUANTIZATION     │   │
+│  │  → to U-Net Backbone     │  │  → Contrastive Targets           │   │
+│  └──────────────────────────┘  └──────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════
+PATH A: MASKING (For Context Encoder Input)
+═══════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP A1: LINEAR PROJECTION                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Linear(in_features=256, out_features=256)
+
+What it does:
+  - Projects normalized features to final embedding space
+  - Can be different dimension than 256 (configured via out_features)
+  - Learned transformation: y = Wx + b
+
+Output: x_projected (B, 1024, 256)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP A2: MASKING                                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Configuration:
+  - mask_prob = 0.65        → 65% of timesteps will be masked
+  - mask_length = 10        → Contiguous spans of 10 timesteps
+  - mask_channel_prob = 0.0 → Don't mask entire channels (seismic-specific)
+
+Masking Algorithm (from Wav2Vec2):
+  1. Choose ~65% of the 1024 timesteps to mask
+  2. For each masked timestep, mask a span of 10 consecutive steps
+  3. Replace masked positions with a LEARNABLE mask_emb parameter
+
+Example:
+  Original: [f₀, f₁, f₂, ..., f₁₀₂₃]
+  Masked:   [f₀, M, M, M, M, M, M, M, M, M, M, f₁₁, f₁₂, ...]
+             ↑                                    ↑
+         unmasked                    masked span of 10
+
+mask_emb: (256,) learnable parameter
+  - Shared across all masked positions
+  - Learned during training to represent "unknown"
+
+Output: x_masked (B, 1024, 256)
+        mask_indices (B, 1024) boolean tensor
+  - True = masked, False = unmasked
+  - ~666 positions are masked (65% of 1024)
+
+WHY MASKING?
+  - Forces model to predict missing information from context
+  - Self-supervised learning signal
+  - Similar to BERT's masked language modeling
+
+
+═══════════════════════════════════════════════════════════════════════════
+PATH B: VECTOR QUANTIZATION (For Contrastive Targets)
+═══════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP B1: VECTOR QUANTIZATION (GUMBEL-SOFTMAX)                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Input: x_normalized (B, 1024, 256) [UNMASKED!]
+
+Configuration:
+  - num_codevector_groups (G) = 2
+  - num_codevectors_per_group (V) = 320
+  - codevector_dim (C) = 256
+  - Total codebook size = G × V = 640 codes
+
+Architecture:
+  1. Codebook: (1, G×V, C//G) = (1, 640, 128)
+     - 640 total code vectors
+     - Each is 128-dimensional
+     - Split into 2 groups of 320
+
+  2. Projection: Linear(256 → G×V) = Linear(256 → 640)
+     - Projects features to logits over codebook
+
+  3. Gumbel-Softmax Sampling:
+     - Add Gumbel noise for differentiability
+     - Apply softmax with temperature τ = 2.0 (annealed to 0.5 during training)
+     - Sample discrete code (hard=True) but with continuous gradients
+
+Process for each timestep:
+  1. Project x_normalized[t] to logits: (256) → (640)
+  2. Reshape to groups: (640) → (2, 320)
+  3. Gumbel-softmax per group → (2, 320) probability distributions
+  4. Select codevectors: (2, 128) from codebook
+  5. Concatenate groups: (2, 128) → (256)
+
+Mathematical formula:
+  Given input x ∈ ℝ^256:
+    logits = W_proj @ x          # (640,)
+    probs = GumbelSoftmax(logits, τ=2.0)  # (640,)
+    quantized = probs @ Codebook  # (256,)
+
+Output: quantized_features (B, 1024, 256)
+
+WHY VECTOR QUANTIZATION?
+  - Discretizes continuous features
+  - Creates finite set of "seismic primitives"
+  - Prevents shortcut learning (model can't just copy features)
+  - Encourages diverse representations (via diversity loss)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP B2: FEATURE PROJECTION                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Linear(256 → 256)
+
+What it does:
+  - Projects quantized codes to final target space
+  - Allows different dimensionality than context encoder
+  - In practice, often same dimension (256)
+
+Output: targets (B, 1024, 256)
+
+These are the TARGETS for contrastive loss!
+
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT STEPS (After Encoder):
+═══════════════════════════════════════════════════════════════════════════
+
+PATH A (Masked features):
+  x_masked → mLSTM U-Net Backbone → context_representations → predictions
+
+PATH B (Quantized targets):
+  targets (frozen, no gradients to encoder)
+
+CONTRASTIVE LOSS:
+  - For each masked position:
+      - Prediction: output of U-Net at that position
+      - Positive target: quantized feature at that position
+      - Negative targets: 100 random samples from other positions
+  - Minimize distance to positive, maximize to negatives
+  - InfoNCE loss with temperature τ=0.1
+
+DIVERSITY LOSS:
+  - Encourages uniform usage of codebook
+  - Penalty: (num_codes - perplexity) / num_codes
+  - Prevents codebook collapse
+
+TOTAL LOSS:
+  L = L_contrastive + 0.1 × L_diversity
+
+
+═══════════════════════════════════════════════════════════════════════════
+KEY DESIGN CHOICES EXPLAINED:
+═══════════════════════════════════════════════════════════════════════════
+
+1. WHY 4× DOWNSAMPLING?
+   - At 100Hz, 4× = 40ms time bins
+   - Preserves sub-50ms resolution needed for P/S wave discrimination
+   - Matches SeisLM exactly for fair comparison
+
+2. WHY 256 DIMENSIONS?
+   - Sufficient for 3-channel seismic (vs 80-dim for audio spectrograms)
+   - Balances capacity vs computation
+   - Standard for seismic Transformers
+
+3. WHY MASK 65%?
+   - Wav2Vec2 best practice for audio
+   - Higher masking rate than BERT (15%) because:
+     * Seismic has lower information density
+     * Longer sequences (1024 vs 512)
+
+4. WHY SPAN MASKING (length=10)?
+   - 10 steps = 0.4 seconds at 100Hz (after 4× downsampling)
+   - Prevents local interpolation
+   - Forces modeling of long-range dependencies
+
+5. WHY VECTOR QUANTIZATION?
+   - Discretizes continuous space
+   - Creates "vocabulary" of seismic patterns
+   - Prevents trivial solutions (can't just copy features)
+   - Enables discrete latent representations
+
+6. WHY SEPARATE PATHS FOR MASKING AND VQ?
+   - VQ operates on CLEAN features (unmasked)
+   - Masking is for context encoder only
+   - This is standard Wav2Vec2 design
+   - Ensures targets are not corrupted
+
+
+═══════════════════════════════════════════════════════════════════════════
+COMPUTATIONAL COMPLEXITY:
+═══════════════════════════════════════════════════════════════════════════
+
+Input: (B, 4096, 3)
+
+Conv Layer 1:
+  - FLOPs: B × 2048 × 256 × 3 × 3 ≈ 4.7M per sample
+  - Params: 3 × 256 × 3 + 256 = 2,560
+
+Conv Layer 2:
+  - FLOPs: B × 1024 × 256 × 256 × 3 ≈ 201M per sample
+  - Params: 256 × 256 × 3 + 256 = 196,864
+
+Total encoder params: ~200K (0.2M)
+
+Peak memory: (B, 1024, 256) × 4 bytes = 1MB per sample (bf16)
+
+
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    2. BIDIRAUTOREG ENCODER                                 ║
+║                     Masked Reconstruction Pretraining                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+PURPOSE:
+--------
+The BidirAutoregEncoder is designed for masked autoencoding (MAE-style)
+pretraining. It processes raw waveforms, applies masking, and returns both
+masked features and original (target) features for reconstruction loss.
+
+
+ARCHITECTURE OVERVIEW:
+---------------------
+Input: Raw 3-channel seismic waveform
+  └─> Conv1dSubsampling (4× downsampling)
+      └─> Linear projection + Dropout
+          └─> Masking (set to zero)
+              └─> Returns (features, tokens) tuple
+
+
+KEY DIFFERENCE FROM CONVDOWN:
+-----------------------------
+  - NO vector quantization (continuous reconstruction)
+  - Masking sets values to ZERO (not learnable embedding)
+  - Returns BOTH masked features AND original targets
+  - Used with MSE loss (not contrastive loss)
+
+
+STEP-BY-STEP DATA FLOW:
+-----------------------
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 1: INPUT                                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Input Shape: (B, L, C)
+Example: (32, 4096, 3)
+
+Same as ConvDownEncoder
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: CONV1D SUBSAMPLING                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Architecture: Conv1dSubampling with 2 layers
+
+Layer 1:
+  Conv1d(3 → d_model, kernel_size=3, stride=2, padding=1)
+  + ReLU activation
+
+  Output: (B, 2048, d_model)
+
+Layer 2:
+  Conv1d(d_model → d_model, kernel_size=3, stride=2, padding=1)
+  + ReLU activation
+
+  Output: (B, 1024, d_model)
+
+TOTAL DOWNSAMPLING: 4× (same as ConvDownEncoder)
+
+IMPORTANT: This module returns BOTH:
+  - features: (B, 1024, d_model) - for further processing
+  - tokens: (B, 1024, d_model) - saved as reconstruction targets
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 3: LINEAR PROJECTION                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Linear(d_model → d_model)
+
+What it does:
+  - Optional transformation (identity if in_features == out_features)
+  - Allows flexibility in feature dimension
+
+Input: features from Conv1dSubsampling
+Output: projected_features (B, 1024, d_model)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 4: DROPOUT                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Operation: Dropout(p=dropout)
+
+What it does:
+  - Randomly sets features to zero with probability p
+  - Only applied during training (not inference)
+  - Regularization to prevent overfitting
+
+Configuration:
+  - dropout = 0.0 during pretraining
+  - dropout > 0 (e.g., 0.1) during fine-tuning
+
+Output: (B, 1024, d_model) [same shape]
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 5: MASKING (ZEROING)                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Configuration:
+  - mask = 0.75            → 75% masking probability
+  - num_zero_elements = 10 → Span length
+
+Masking Algorithm:
+  1. For each sample in batch:
+     a. Calculate how many spans to mask:
+        num_spans = int(mask × (seq_len - num_zero_elements))
+                  = int(0.75 × (1024 - 10))
+                  = 760 spans
+
+     b. Randomly select starting positions for spans
+
+     c. For each span, set 10 consecutive timesteps to ZERO
+        features[batch_idx, start:start+10, :] = 0
+
+  2. Keep mask_indices for computing loss only on masked positions
+
+Output: masked_features (B, 1024, d_model)
+        mask_indices (list of masked positions per batch item)
+
+CRITICAL DIFFERENCE:
+  - ConvDownEncoder: Replace with LEARNABLE mask_emb
+  - BidirAutoregEncoder: Set to ZERO
+
+WHY ZERO?
+  - Simpler than learnable embedding
+  - Forces model to reconstruct from surrounding context
+  - Standard for MAE (Masked Autoencoding)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STEP 6: RETURN TUPLE (Pretraining Mode)                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+If self.pretraining == True:
+  return (masked_features, tokens)
+
+masked_features: (B, 1024, d_model)
+  - Has ~75% positions set to zero
+  - Fed to decoder for reconstruction
+
+tokens: (B, 1024, d_model)
+  - ORIGINAL features from Conv1dSubsampling
+  - UNMASKED
+  - Used as TARGETS for MSE loss
+
+If self.pretraining == False (fine-tuning):
+  return masked_features only
+
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT STEPS (After Encoder):
+═══════════════════════════════════════════════════════════════════════════
+
+PRETRAINING:
+  masked_features → mLSTM Sequential Encoder → decoder → reconstructed
+
+  MSE Loss:
+    L_recon = MSE(reconstructed[masked_positions], tokens[masked_positions])
+
+  Only compute loss on MASKED positions (ignore unmasked)
+
+FINE-TUNING:
+  - Set pretraining=False
+  - Set mask=0.0 (no masking)
+  - Use masked_features directly (no reconstruction)
+  - Add task-specific head (e.g., phase picking decoder)
+
+
+═══════════════════════════════════════════════════════════════════════════
+KEY DESIGN CHOICES EXPLAINED:
+═══════════════════════════════════════════════════════════════════════════
+
+1. WHY 75% MASKING (vs 65% in ConvDown)?
+   - Higher masking is more challenging
+   - MAE benefits from aggressive masking
+   - Forces strong contextual understanding
+
+2. WHY ZERO INSTEAD OF LEARNABLE EMBEDDING?
+   - Simpler architecture
+   - Standard for vision MAE (He et al., 2022)
+   - Prevents overfitting to mask token
+   - Model must learn to fill gaps
+
+3. WHY RETURN BOTH (FEATURES, TOKENS)?
+   - features: Input to decoder (masked)
+   - tokens: Targets for reconstruction (unmasked)
+   - Cleanly separates input/output
+   - Allows computing loss only on masked positions
+
+4. WHY CONTINUOUS RECONSTRUCTION (NO VQ)?
+   - Simpler than contrastive learning
+   - Direct pixel-level (or feature-level) reconstruction
+   - No need for codebook management
+   - Lower memory footprint
+
+5. WHY CONV1DSUBSAMPLING INSTEAD OF MULTIPLE CONV LAYERS?
+   - More compact implementation
+   - Same result as ConvDown (4× downsampling)
+   - Returns both features and tokens in one forward pass
+
+
+═══════════════════════════════════════════════════════════════════════════
+COMPARISON: CONVDOWN vs BIDIRAUTOREG
+═══════════════════════════════════════════════════════════════════════════
+
+┌────────────────────────┬─────────────────────┬──────────────────────────┐
+│ Aspect                 │ ConvDownEncoder     │ BidirAutoregEncoder      │
+├────────────────────────┼─────────────────────┼──────────────────────────┤
+│ Pretraining Strategy   │ Contrastive         │ Masked Reconstruction    │
+│ Downsampling           │ 4× (2 Conv layers)  │ 4× (Conv1dSubsampling)   │
+│ Activation             │ GELU                │ ReLU                     │
+│ Masking Type           │ Learnable embedding │ Set to zero              │
+│ Masking Ratio          │ 65%                 │ 75%                      │
+│ Vector Quantization    │ Yes (Gumbel VQ)     │ No                       │
+│ Loss Function          │ InfoNCE + Diversity │ MSE                      │
+│ Targets                │ Discrete (VQ codes) │ Continuous (features)    │
+│ Context Encoder        │ U-Net with skips    │ Sequential (no U-Net)    │
+│ Complexity             │ Higher              │ Lower                    │
+│ Memory Usage           │ Higher (codebook)   │ Lower                    │
+│ Training Speed         │ Slower              │ Faster                   │
+└────────────────────────┴─────────────────────┴──────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════
+WHEN TO USE EACH:
+═══════════════════════════════════════════════════════════════════════════
+
+USE CONVDOWN ENCODER IF:
+  ✓ You want state-of-the-art representation learning
+  ✓ You have large unlabeled datasets
+  ✓ You can afford higher computational cost
+  ✓ You want discrete latent representations
+  ✓ You're following Wav2Vec2/SeisLM best practices
+
+USE BIDIRAUTOREG ENCODER IF:
+  ✓ You want simpler, faster pretraining
+  ✓ You prefer continuous representations
+  ✓ You have limited computational resources
+  ✓ You want easier debugging (MSE loss is interpretable)
+  ✓ You're following MAE/BERT-style pretraining
+
+
+═══════════════════════════════════════════════════════════════════════════
+REFERENCES:
+═══════════════════════════════════════════════════════════════════════════
+
+ConvDownEncoder:
+  - Baevski et al. (2020): "wav2vec 2.0: A Framework for Self-Supervised
+    Learning of Speech Representations"
+  - Liu et al. (2024): "SeisLM: A Foundation Model for Seismology"
+  - van den Oord et al. (2018): "Representation Learning with Contrastive
+    Predictive Coding"
+
+BidirAutoregEncoder:
+  - He et al. (2022): "Masked Autoencoders Are Scalable Vision Learners"
+  - Devlin et al. (2019): "BERT: Pre-training of Deep Bidirectional
+    Transformers for Language Understanding"
+  - Hunziker et al. (2025): Thesis on SSM-based seismic models
+
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
+
+For questions or clarifications, refer to:
+  - Implementation: /seismic_data_modeling/tasks/encoders.py
+  - Configs: /seismic_data_modeling/configs/experiment/contrastive/
+           /seismic_data_modeling/configs/experiment/xlstm_large/
+  - Diagrams: /evaluation_results/encoder_diagrams/

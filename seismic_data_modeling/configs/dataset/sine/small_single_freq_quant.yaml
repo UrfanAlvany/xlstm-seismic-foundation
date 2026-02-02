@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - sine/default_sine
+
+dataset:
+  data_dir: dataloaders/data/basic_waveforms/sine_200hz_small_quantized.npy
+  sample_len: 2048
+  min_freq: 200
+  max_freq: 200
+  num_frequencies: 1
+  num_random_amplitudes: 20
+  noise_amplitude: 0.1
+  quantize: True
+  overwrite_existing_file: True

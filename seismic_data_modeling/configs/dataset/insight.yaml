@@ -1,0 +1,18 @@
+_name_: insight
+
+data_dir: 'dataloaders/data/insight'
+window_size_samples: 32768  # 27 minutes at 20Hz
+norm_type: 'std'
+components: 'ZNE'
+fs: 20
+default_uncertainty: 20.0
+overwrite_uncertainties: False
+load_inventory: False
+noise_fraction: 0.5  # +50% noise traces, so 1/3 of the dataset is noise
+pre_slice: False
+merge_when_loading: False  
+preload_waveform_data: False
+load_only_event_data: False
+return_event_name: False
+use_daily_data_structure: True
+

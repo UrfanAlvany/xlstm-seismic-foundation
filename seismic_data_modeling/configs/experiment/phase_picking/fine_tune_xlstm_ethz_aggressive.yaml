@@ -1,0 +1,70 @@
+# @package _global_
+# AGGRESSIVE: Higher LR, larger batch, more data for best results
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_hydra
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_fine_tune_ETHZ_AGGRESSIVE
+
+model:
+  pretrained: /path/to/your_xlstm_pretrained.ckpt
+
+train:
+  monitor: val/loss
+  mode: min
+  unfreeze_at_epoch: 10  # Unfreeze later - train decoder first
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: ETHZ
+  norm_type: std
+  training_fraction: 0.2  # Use 20% of data for better convergence
+
+encoder:
+  pretrained: True
+
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: True
+  kernel_size: 3
+  dropout: 0.1
+
+loader:
+  batch_size: 64  # Larger batch for stability (if memory allows)
+  num_workers: 8
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 4  # Match pretraining
+
+# MATCH pretraining optimizer exactly
+optimizer:
+  lr: 2e-3  # Higher LR - 10x lower than pretraining
+  weight_decay: 0.005  # Moderate regularization
+  betas: [0.9, 0.95]  # EXACT match to pretraining
+  eps: 1.0e-8
+  fused: true
+  foreach: false
+  amsgrad: false
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 640
+  num_training_steps: 6400
+
+trainer:
+  max_steps: 6400
+  max_epochs: 100
+  precision: bf16-mixed  # ⚠️ CRITICAL: MUST match pretraining
+  gradient_clip_val: 0.0
+  val_check_interval: 0.25
+  log_every_n_steps: 50
+
+optim:
+  clip_grad_norm: 1.0  # MATCH pretraining

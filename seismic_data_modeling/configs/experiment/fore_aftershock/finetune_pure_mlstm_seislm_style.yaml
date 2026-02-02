@@ -1,0 +1,72 @@
+# @package _global_
+# Fixed foreshock finetuning: Freeze encoder for first 5 epochs
+# Issue: Unfreezing from start causes gradient explosion in Epoch 1
+# Root cause: Random decoder gradients corrupt pretrained encoder weights
+# Solution: Let decoder stabilize first, THEN unfreeze encoder
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_finetune_foreshock_GRADUAL_UNFREEZE
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm
+  bidirectional: true
+  gradient_checkpointing: true
+  d_model: 176  # CRITICAL: Must match pretrained checkpoint!
+  load_decoder: false  # Don't load decoder - reinitialize for 9-class task
+
+train:
+  monitor: val/loss
+  mode: min
+  unfreeze_at_epoch: 5  # FREEZE encoder for first 5 epochs to prevent gradient explosion
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True  # Frozen initially, unfreezes at epoch 5
+
+dataset:
+  num_classes: 9
+  batch_size: 16  # Match SeisLM
+  num_workers: 0
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 176  # CRITICAL: Must match model.d_model (encoder output)!
+
+optimizer:
+  lr: 1e-4            # Lower LR for stability when unfreezing
+  weight_decay: 0.01  # MATCH PRETRAINING
+  betas: [0.9, 0.95]  # MATCH PRETRAINING
+  eps: 1e-08          # MATCH PRETRAINING (critical!)
+  fused: false
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 1000  # Longer warmup for stability
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 40         # Longer training with lower LR
+  gradient_clip_val: 0.5 # Tighter clipping to prevent gradient explosion
+  val_check_interval: 0.5
+  precision: 32-true     # FP32 for maximum numerical stability

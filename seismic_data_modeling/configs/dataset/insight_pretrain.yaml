@@ -1,0 +1,8 @@
+_name_: insight-pretrain
+
+data_dir: 'dataloaders/data/insight'
+window_size_samples: 32768  # 27 minutes at 20Hz
+norm_type: 'std'
+components: 'ZNE'
+fs: 20
+

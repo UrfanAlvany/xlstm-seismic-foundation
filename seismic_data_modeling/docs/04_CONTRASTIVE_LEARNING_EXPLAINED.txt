@@ -1,0 +1,644 @@
+================================================================================
+COMPREHENSIVE DOCUMENTATION: xLSTM SEISMIC MODELS
+PART 4: CONTRASTIVE LEARNING EXPLAINED IN DEPTH
+================================================================================
+
+Purpose: Deep dive into contrastive learning theory and practice
+Relevance: Core training paradigm for Config 2
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. Introduction to Contrastive Learning
+2. Why Contrastive Learning Works
+3. InfoNCE Loss Derivation
+4. Comparison with Other Self-Supervised Methods
+5. Wav2Vec 2.0 Connection
+6. Practical Implementation Details
+7. Hyperparameter Tuning Guide
+8. Common Pitfalls and Solutions
+
+================================================================================
+1. INTRODUCTION TO CONTRASTIVE LEARNING
+================================================================================
+
+CORE IDEA:
+---------
+
+Learn representations by comparing examples:
+  - POSITIVE pairs: Similar/related examples (should be close)
+  - NEGATIVE pairs: Dissimilar/unrelated examples (should be far)
+
+Instead of predicting pixel values, learn to distinguish contexts.
+
+ANALOGY:
+-------
+
+Traditional supervised learning:
+  "Is this image a cat or dog?" → Classify with labels
+
+Contrastive self-supervised learning:
+  "Which of these 100 images is the same cat?" → Match without labels
+
+The model learns features by solving the matching problem.
+
+KEY COMPONENTS:
+--------------
+
+1. **Encoder**: Maps raw data to representations
+   - Input: Raw waveform
+   - Output: Feature vector
+
+2. **Positive pairs**: Related examples
+   - Same waveform at different times (temporal)
+   - Augmented versions of same sample (spatial)
+
+3. **Negative pairs**: Unrelated examples
+   - Different waveforms
+   - Random samples from batch
+
+4. **Similarity metric**: Measure closeness
+   - Cosine similarity
+   - Dot product
+   - Learned distance function
+
+5. **Contrastive loss**: Optimize similarity
+   - InfoNCE (ours)
+   - SimCLR
+   - MoCo
+   - CLIP
+
+================================================================================
+2. WHY CONTRASTIVE LEARNING WORKS
+================================================================================
+
+INTUITION:
+---------
+
+By forcing model to distinguish similar from dissimilar:
+  → Model learns DISCRIMINATIVE features
+  → These features are often better than supervised learning!
+
+Why?
+  1. More training signal (every pair is a training example)
+  2. Robust to noise (doesn't need exact pixel match)
+  3. Captures high-level semantics (not low-level details)
+  4. Transfer learning (features generalize well)
+
+MATHEMATICAL INSIGHT:
+--------------------
+
+Contrastive learning approximates maximizing mutual information:
+
+  I(X; Y) = H(X) - H(X|Y)
+
+Where:
+  X = Input (waveform)
+  Y = Representation (encoded features)
+
+Maximizing I(X; Y) means:
+  - Representation Y contains maximal information about X
+  - But discards irrelevant details (noise, artifacts)
+
+InfoNCE provides a lower bound on mutual information!
+
+  I(X; Y) ≥ log(K) - L_InfoNCE
+
+Where K = number of negatives
+
+Therefore: Minimizing InfoNCE ≈ Maximizing mutual information
+
+COMPARISON TO ALTERNATIVES:
+--------------------------
+
+1. **Autoregressive (Config 1)**:
+   Pros: Exact reconstruction, pixel-level details
+   Cons: May overfit to noise, computationally expensive
+
+2. **Contrastive (Config 2)**:
+   Pros: Robust features, fast inference, better transfer
+   Cons: Requires negatives, sensitive to negative sampling
+
+3. **Autoencoders**:
+   Pros: Simple, unsupervised
+   Cons: May learn trivial solutions (identity)
+
+4. **GANs**:
+   Pros: High-quality generation
+   Cons: Unstable training, mode collapse
+
+Contrastive strikes balance: Good representations + stable training
+
+================================================================================
+3. InfoNCE LOSS DERIVATION
+================================================================================
+
+SETUP:
+-----
+
+Given:
+  - Context c (from masked input)
+  - Positive target z+ (true continuation)
+  - K negative targets {z-}_k (distractors)
+
+Goal: Learn to identify z+ among K+1 candidates
+
+FORMULATION:
+-----------
+
+Compute similarities:
+  s+ = sim(c, z+)           # Positive similarity
+  s-_k = sim(c, z-_k)       # Negative similarities
+
+Create categorical distribution:
+  p(z+|c) = exp(s+/τ) / (exp(s+/τ) + Σ_k exp(s-_k/τ))
+
+Where τ = temperature hyperparameter
+
+InfoNCE loss (negative log-likelihood):
+  L = -log p(z+|c)
+    = -log(exp(s+/τ)) + log(exp(s+/τ) + Σ_k exp(s-_k/τ))
+    = -s+/τ + log(exp(s+/τ) + Σ_k exp(s-_k/τ))
+
+GRADIENT:
+--------
+
+∂L/∂c = -1/τ · ∂s+/∂c + Σ_k p_k · ∂s-_k/∂c
+
+Where p_k = exp(s-_k/τ) / (exp(s+/τ) + Σ_k exp(s-_k/τ))
+
+Interpretation:
+  - Gradient pulls c towards z+ (positive term)
+  - Gradient pushes c away from z-_k (negative term)
+  - Weighting by p_k: Hard negatives (high similarity) push more
+
+OPTIMAL SOLUTION:
+----------------
+
+At optimum:
+  c ≈ z+  (context matches positive target)
+  c ⊥ z-_k (context orthogonal to negatives)
+
+This creates a well-separated embedding space!
+
+TEMPERATURE EFFECT:
+------------------
+
+Low temperature (τ → 0):
+  - Sharp distribution (confident predictions)
+  - Large gradients (aggressive optimization)
+  - Risk: Overfitting, instability
+
+High temperature (τ → ∞):
+  - Uniform distribution (uncertain predictions)
+  - Small gradients (slow optimization)
+  - Risk: Undertraining
+
+Typical values: τ ∈ [0.05, 0.5]
+Our config: τ = 0.1 (relatively sharp)
+
+================================================================================
+4. COMPARISON WITH OTHER SELF-SUPERVISED METHODS
+================================================================================
+
+CONTRASTIVE METHODS:
+-------------------
+
+1. **SimCLR** (Simple Framework for Contrastive Learning):
+   - Uses: Image augmentation (crop, color, blur)
+   - Negatives: Other samples in batch
+   - Loss: NT-Xent (normalized temperature-scaled cross-entropy)
+   - Our config: Similar to SimCLR but for waveforms
+
+2. **MoCo** (Momentum Contrast):
+   - Uses: Momentum encoder for negatives
+   - Queue: Stores past negatives (memory bank)
+   - Benefit: More negatives without larger batch
+   - Our config: Doesn't use momentum (simpler)
+
+3. **CLIP** (Contrastive Language-Image Pre-training):
+   - Uses: Text-image pairs
+   - Benefit: Zero-shot classification
+   - Our config: Could extend to seismic event descriptions!
+
+4. **Wav2Vec 2.0** (Speech recognition):
+   - Uses: Masked prediction + quantization
+   - Our config: Directly inspired by this!
+
+NON-CONTRASTIVE METHODS:
+-----------------------
+
+1. **BYOL** (Bootstrap Your Own Latent):
+   - No negatives needed
+   - Uses: Momentum encoder + predictor
+   - Benefit: No collapse with careful design
+   - Trade-off: More complex architecture
+
+2. **SimSiam**:
+   - Even simpler than BYOL
+   - Stop-gradient prevents collapse
+   - Benefit: Very simple
+   - Trade-off: May not learn as rich features
+
+3. **Barlow Twins**:
+   - Maximizes agreement along dimensions
+   - Minimizes redundancy
+   - Benefit: No negatives, no momentum
+   - Trade-off: Batch size sensitivity
+
+WHY WE CHOOSE INFONCE + VQ:
+---------------------------
+
+✓ Proven effective (Wav2Vec 2.0 for speech)
+✓ Stable training (with proper negatives)
+✓ Rich features (VQ provides discrete targets)
+✓ Interpretable (can inspect codebook)
+✓ Transfer learning (works across datasets)
+
+================================================================================
+5. WAV2VEC 2.0 CONNECTION
+================================================================================
+
+WAV2VEC 2.0 ARCHITECTURE:
+-------------------------
+
+Designed for speech recognition, very similar to our Config 2!
+
+Components:
+  1. Feature encoder: CNN (7 layers, 512 dim)
+  2. Masking: Span masking (mask_prob=0.065, mask_length=10)
+  3. Transformer: 12 layers, 768 dim
+  4. Quantization: Gumbel-Softmax VQ (2 groups × 320 codes)
+  5. Contrastive: InfoNCE with 100 negatives
+
+OUR ADAPTATION FOR SEISMIC:
+---------------------------
+
+1. Feature encoder: Conv (2 layers, 256 dim)
+   - Simpler: Seismic signals less complex than speech
+
+2. Masking: Span masking (mask_prob=0.65, mask_length=10)
+   - Higher ratio: More aggressive masking
+
+3. Transformer → xLSTM U-Net:
+   - Better for sequences (mLSTM)
+   - Multi-scale (U-Net)
+
+4. Quantization: SAME (2 groups × 320 codes)
+   - Proven effective
+
+5. Contrastive: SAME (InfoNCE, 100 negatives)
+   - Proven effective
+
+KEY DIFFERENCES:
+---------------
+
+| Aspect          | Wav2Vec 2.0         | Our Config 2        |
+|-----------------|---------------------|---------------------|
+| Domain          | Speech (audio)      | Seismology          |
+| Backbone        | Transformer         | xLSTM U-Net         |
+| Input length    | ~100K samples       | 4096 samples        |
+| Channels        | 1 (mono audio)      | 3 (Z, N, E)         |
+| Datasets        | LibriSpeech (960h)  | 8 seismic datasets  |
+| Downstream      | ASR (transcription) | Phase picking, etc. |
+
+RESULTS COMPARISON:
+------------------
+
+Wav2Vec 2.0 on speech:
+  - Word Error Rate: 1.8% (LibriSpeech test-clean)
+  - Beats supervised with 10x less labeled data
+
+Our Config 2 on seismic (expected):
+  - Phase picking F1: ~0.95 (with fine-tuning)
+  - Should beat supervised with 5-10x less labeled data
+
+================================================================================
+6. PRACTICAL IMPLEMENTATION DETAILS
+================================================================================
+
+NEGATIVE SAMPLING STRATEGIES:
+-----------------------------
+
+1. **In-batch negatives** (our approach):
+   - Sample from same batch
+   - Pros: Fast, no extra memory
+   - Cons: Batch size affects performance
+
+   ```python
+   def sample_in_batch_negatives(quantized, num_neg=100):
+       B, T, D = quantized.shape
+       flat = quantized.view(B*T, D)
+
+       negatives = []
+       for _ in range(num_neg):
+           indices = torch.randint(0, B*T, (B*T,))
+           negatives.append(flat[indices])
+
+       return torch.stack(negatives, dim=1).view(B, T, num_neg, D)
+   ```
+
+2. **Hard negatives** (alternative):
+   - Sample negatives similar to positive
+   - Pros: Harder task, better features
+   - Cons: Expensive to compute
+
+   ```python
+   def sample_hard_negatives(context, quantized, num_neg=100):
+       # Compute all similarities
+       sim = cosine_similarity(context, quantized_all)
+
+       # Sample from high-similarity (but not positive)
+       hard_indices = torch.topk(sim, k=num_neg+1).indices[:, 1:]
+
+       return quantized_all[hard_indices]
+   ```
+
+3. **Memory bank** (MoCo style):
+   - Store past negatives
+   - Pros: Many negatives
+   - Cons: Memory overhead, staleness
+
+SIMILARITY METRICS:
+------------------
+
+1. **Cosine similarity** (our choice):
+   sim = (c · z) / (||c|| ||z||)
+
+   Pros: Bounded [-1, 1], rotation invariant
+   Cons: Ignores magnitude
+
+2. **Dot product**:
+   sim = c · z
+
+   Pros: Simple, fast
+   Cons: Unbounded, scale sensitive
+
+3. **Euclidean distance**:
+   sim = -||c - z||^2
+
+   Pros: Metric space
+   Cons: Not normalized
+
+TEMPERATURE SCHEDULING:
+----------------------
+
+Fixed (our approach):
+  τ = 0.1 (constant throughout training)
+
+Annealing:
+  τ_t = τ_max - (τ_max - τ_min) · t / T
+
+  Start warm (τ=0.5), end sharp (τ=0.05)
+
+Learned:
+  τ = exp(log_τ)  # Learnable parameter
+
+  Let model find optimal temperature
+
+================================================================================
+7. HYPERPARAMETER TUNING GUIDE
+================================================================================
+
+CRITICAL HYPERPARAMETERS:
+------------------------
+
+1. **Number of negatives (K)**:
+   - Typical: 50-1000
+   - Our choice: 100
+
+   Too few (K<50):
+     → Easy task, poor features
+   Too many (K>1000):
+     → Slow training, diminishing returns
+
+   Rule of thumb: K ≈ 10-20% of batch size × seq_len
+
+2. **Temperature (τ)**:
+   - Typical: 0.05-0.5
+   - Our choice: 0.1
+
+   Too low (τ<0.05):
+     → Unstable, overfitting
+   Too high (τ>0.5):
+     → Slow learning, underfitting
+
+   Start τ=0.1, adjust if:
+     - Loss explodes → increase τ
+     - Learning slow → decrease τ
+
+3. **Mask ratio**:
+   - Typical: 0.5-0.8
+   - Our choice: 0.65
+
+   Too low (<0.5):
+     → Easy task, may memorize
+   Too high (>0.8):
+     → Too hard, poor training
+
+4. **Mask span length**:
+   - Typical: 5-20 timesteps
+   - Our choice: 10
+
+   Depends on:
+     - Signal characteristics (10 samples ≈ 0.1s at 100Hz)
+     - Correlation length (how far correlations extend)
+
+5. **Diversity weight (λ)**:
+   - Typical: 0.01-1.0
+   - Our choice: 0.1
+
+   Too low (<0.01):
+     → Codebook collapse (few codes used)
+   Too high (>1.0):
+     → Uniform codebook (no structure)
+
+   Monitor perplexity: Target 50-80% of max (320-512 out of 640)
+
+TUNING PROCEDURE:
+----------------
+
+1. Start with defaults (from Wav2Vec 2.0)
+2. Train for 5 epochs, monitor metrics
+3. Adjust based on:
+
+   Low perplexity (<100):
+     → Increase diversity_lambda
+
+   Loss not decreasing:
+     → Increase temperature
+     → Reduce num_negatives
+     → Check mask ratio
+
+   Loss exploding:
+     → Decrease learning rate
+     → Decrease temperature
+     → Add gradient clipping
+
+   Overfitting:
+     → Increase mask ratio
+     → Increase dropout
+     → Add weight decay
+
+================================================================================
+8. COMMON PITFALLS AND SOLUTIONS
+================================================================================
+
+PROBLEM 1: Codebook Collapse
+-----------------------------
+
+Symptom: Perplexity very low (<50), only few codes used
+
+Causes:
+  - Diversity weight too low
+  - Learning rate too high (codebook not explored)
+  - Initialization poor
+
+Solutions:
+  ✓ Increase diversity_lambda (0.1 → 0.5)
+  ✓ Reinitialize codebook uniformly
+  ✓ Lower learning rate for quantizer
+  ✓ Use larger Gumbel temperature initially
+
+Code fix:
+```python
+# Increase diversity weight
+total_loss = contrastive_loss + 0.5 * diversity_loss  # was 0.1
+
+# Separate LR for quantizer
+param_groups = [
+    {'params': model.backbone.parameters(), 'lr': 1e-3},
+    {'params': model.quantizer.parameters(), 'lr': 5e-4},  # Lower LR
+]
+```
+
+PROBLEM 2: Training Instability
+-------------------------------
+
+Symptom: Loss spikes, NaN gradients
+
+Causes:
+  - Temperature too low
+  - Batch size too small
+  - Learning rate too high
+
+Solutions:
+  ✓ Increase temperature (0.1 → 0.2)
+  ✓ Gradient clipping (max_norm=1.0)
+  ✓ Larger batch size
+  ✓ Mixed precision (bf16)
+
+Code fix:
+```python
+# Gradient clipping
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+# Warmup scheduler
+scheduler = get_cosine_schedule_with_warmup(
+    optimizer,
+    num_warmup_steps=int(0.2 * total_steps),  # 20% warmup
+    num_training_steps=total_steps
+)
+```
+
+PROBLEM 3: Poor Transfer Performance
+------------------------------------
+
+Symptom: Pretraining works, but fine-tuning fails
+
+Causes:
+  - Too many negatives (overfits to contrastive task)
+  - Features too high-level (lose details)
+  - Wrong projection dimension
+
+Solutions:
+  ✓ Reduce num_negatives (100 → 50)
+  ✓ Train longer
+  ✓ Fine-tune with lower LR
+  ✓ Freeze encoder, only train head initially
+
+Code fix:
+```python
+# During fine-tuning
+for param in model.encoder.parameters():
+    param.requires_grad = False
+for param in model.backbone.parameters():
+    param.requires_grad = False
+
+# Train only task head for first few epochs
+optimizer = AdamW(model.task_head.parameters(), lr=1e-4)
+
+# Then unfreeze and continue
+for param in model.parameters():
+    param.requires_grad = True
+optimizer = AdamW(model.parameters(), lr=1e-5)  # Lower LR
+```
+
+PROBLEM 4: Slow Training
+------------------------
+
+Symptom: Training much slower than expected
+
+Causes:
+  - Too many negatives
+  - Large batch size
+  - Inefficient sampling
+
+Solutions:
+  ✓ Reduce num_negatives (100 → 50)
+  ✓ Use in-batch negatives (not memory bank)
+  ✓ Enable TFLA kernels
+  ✓ Mixed precision (bf16)
+
+Code fix:
+```python
+# Enable all optimizations
+model.config.enable_tflakernels = True
+trainer.precision = 'bf16-mixed'
+trainer.strategy = 'ddp'  # Distributed
+
+# Reduce negatives if needed
+config.num_negatives = 50  # Was 100
+```
+
+================================================================================
+SUMMARY: CONTRASTIVE LEARNING CHECKLIST
+================================================================================
+
+Setup:
+  ✓ Encoder with masking (span-based)
+  ✓ Backbone for context extraction
+  ✓ Quantizer for discrete targets
+  ✓ Negative sampling strategy
+  ✓ InfoNCE loss implementation
+
+Hyperparameters:
+  ✓ num_negatives: 50-100
+  ✓ temperature: 0.05-0.2
+  ✓ mask_prob: 0.6-0.8
+  ✓ mask_length: 5-20
+  ✓ diversity_lambda: 0.1-0.5
+
+Training:
+  ✓ Monitor: loss, perplexity, grad_norm
+  ✓ Gradient clipping: max_norm=1.0
+  ✓ Warmup: 10-20% of training
+  ✓ Mixed precision: bf16
+  ✓ Multi-GPU: DDP
+
+Validation:
+  ✓ Fixed mask for reproducibility
+  ✓ Track perplexity (target: 50-80% of K)
+  ✓ Visualize: Codebook usage, embeddings (t-SNE)
+
+Fine-tuning:
+  ✓ Start with frozen encoder
+  ✓ Low learning rate (1e-4 to 1e-5)
+  ✓ Task-specific head
+  ✓ Fewer epochs than pretraining
+
+================================================================================
+END OF PART 4: CONTRASTIVE LEARNING EXPLAINED
+Next: Part 5 - Vector Quantization Explained
+================================================================================

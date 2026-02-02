@@ -1,0 +1,112 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: regression
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+  - _self_
+
+experiment_name: xlstm_unet_11m_tritonxl_recover
+
+train:
+  monitor: val/loss
+  mode: min
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+  interval: step
+  compile_model: false
+  compile_mode: reduce-overhead
+  clip_grad_norm: 1.0                # manual clipping handled in code hook
+
+trainer:
+  accelerator: gpu
+  strategy: ddp
+  devices: 2                         # only 2 GPUs available
+  num_nodes: 1
+  accumulate_grad_batches: 1         # 64 microbatch x4 accumulation per GPU
+  max_epochs: 50
+  precision: bf16-mixed
+  max_steps: 452100
+  gradient_clip_val: 0.0             # let manual clipping do it (avoids double-clip)
+  log_every_n_steps: 100
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: false
+  val_check_interval: 0.5
+
+loader:
+  batch_size: 64                     # per-GPU microbatch
+  num_workers: 24
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 8
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  dataset_name: [STEAD, MLAAPDE]
+  d_data: 3
+  norm_type: std
+  masking: 0.75
+  eval_mask_seed: 2025
+  preload: false
+
+task:
+  _name_: regression
+  loss: masked_mse
+  loss_val: masked_mse
+  metrics: [masked_mse, mse]
+
+optimizer:
+  _name_: adamw
+  lr: 0.002
+  weight_decay: 0.05
+  betas: [0.9, 0.95]
+  fused: true                        # try fused; code falls back to foreach if unsupported
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 45210
+  num_training_steps: 452100
+
+model:
+  _name_: xlstm-unet
+  d_model: 80
+  n_layers: 5
+  pool: [4, 4]
+  expand: 2
+  dropout: 0.1
+  block_type: mlstm
+  bidirectional: true
+  max_seq_len: 4096
+
+  # sLSTM (unused here but kept for completeness)
+  slstm_num_heads: 4
+  slstm_conv1d_kernel_size: 4
+  slstm_bias_init: powerlaw_blockdependent
+
+  # mLSTM settings
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 1.6
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+
+  # Use TFLA kernels for speed/stability
+  enable_tflakernels: true
+  chunk_size: 128
+  chunkwise_kernel: 'chunkwise--triton_xl_chunk'
+  sequence_kernel: 'native_sequence__triton'
+  step_kernel: 'triton'
+  autocast_kernel_dtype: 'bfloat16'
+  gradient_checkpointing: false
+
+encoder: { _name_: linear }
+decoder: { _name_: linear }

@@ -1,0 +1,72 @@
+# @package _global_
+# FROZEN ENCODER + HIGH DECODER LR
+# Strategy: Keep encoder frozen but use MUCH higher LR to train decoder better
+# Test if pretrained features are good enough with better decoder training
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_finetune_foreshock_FROZEN_HIGH_LR
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm
+  bidirectional: true
+  gradient_checkpointing: true
+  d_model: 176
+  load_decoder: false
+
+train:
+  monitor: val/loss
+  mode: min
+  unfreeze_at_epoch: 999  # NEVER UNFREEZE
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True   # KEEP FROZEN
+
+dataset:
+  num_classes: 9
+  batch_size: 16  # Larger batch
+  num_workers: 0
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 176
+
+optimizer:
+  lr: 1e-3           # 10x HIGHER LR! Encoder frozen so safe
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  eps: 1e-08
+  fused: false
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 500
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 60
+  gradient_clip_val: 1.0     # More relaxed since encoder frozen
+  val_check_interval: 0.5
+  precision: bf16-mixed
+  accumulate_grad_batches: 2

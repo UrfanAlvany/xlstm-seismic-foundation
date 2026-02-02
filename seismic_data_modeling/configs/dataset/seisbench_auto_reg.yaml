@@ -1,0 +1,20 @@
+_name_: ethz-auto-reg
+
+# Base sampling/window defaults (overridden by experiments)
+sample_len: 8192
+bits: 8
+
+# Optional knobs commonly overridden at run-time
+# Adding them here avoids Hydra struct errors when passed via CLI overrides.
+d_data: 3
+norm_type: std
+dataset_name: ETHZ
+preload: false
+wav2vec: false
+bidir_autoreg: false
+training_fraction: 1.0
+# Deterministic eval/test masking seed (used when EvalPretrainMask is active)
+eval_mask_seed: 2025
+normalize_first: false
+alpha: 1.0
+masking: 0.0

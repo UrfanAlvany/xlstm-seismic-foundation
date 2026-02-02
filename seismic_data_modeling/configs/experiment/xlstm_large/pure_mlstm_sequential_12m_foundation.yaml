@@ -1,0 +1,106 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+experiment_name: pure_mlstm_sequential_12m_foundation
+
+train:
+  monitor: val/loss
+  mode: min
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+  interval: step
+  use_gradient_accumulation: false
+  gradient_accumulation_steps: 1
+  compile_model: false
+
+trainer:
+  accelerator: gpu
+  strategy: ddp
+  devices: 2
+  max_epochs: 55
+  gradient_clip_val: 0.0
+  log_every_n_steps: 100
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: false
+  precision: bf16-mixed
+  max_steps: 452100
+  val_check_interval: 1.0
+
+loader:
+  batch_size: 128
+  num_workers: 12
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+dataset:
+  _name_: ethz-auto-reg
+  sample_len: 4096
+  bits: 0
+  dataset_name: [STEAD, MLAAPDE]
+  d_data: 3
+  norm_type: std
+  masking: 0.75
+  preload: false
+  eval_mask_seed: 2025
+
+task:
+  _name_: regression
+  loss: masked_mse
+  metrics: mse
+  loss_val: masked_mse
+
+optimizer:
+  _name_: adamw
+  lr: 0.002
+  betas: [0.9, 0.95]
+  eps: 1.0e-08
+  weight_decay: 0.01
+  amsgrad: false
+  foreach: false
+  fused: true
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 45210
+  num_training_steps: 452100
+
+model:
+  _name_: xlstm-unet
+  block_type: mlstm
+  bidirectional: true
+  max_seq_len: 4096
+  d_model: 176
+  n_layers: 24
+  dropout: 0.1
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 8
+  mlstm_proj_factor: 2.0
+  mlstm_backend: chunkwise
+  gradient_checkpointing: false
+  fuse_per_block: true
+  enable_tflakernels: true
+  chunk_size: 128
+  use_unet: false
+  chunkwise_kernel: chunkwise--triton_xl_chunk
+  sequence_kernel: native_sequence__triton
+  step_kernel: triton
+  autocast_kernel_dtype: bfloat16
+
+encoder:
+  _name_: bidir-autoreg-encoder
+
+decoder:
+  _name_: upsampling-decoder
+
+metrics: [masked_mse, mse]
+
+optim:
+  clip_grad_norm: 1.0
+

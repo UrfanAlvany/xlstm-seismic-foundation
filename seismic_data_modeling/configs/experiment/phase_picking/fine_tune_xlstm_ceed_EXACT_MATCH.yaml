@@ -1,0 +1,66 @@
+ # @package _global_
+# EXACT MATCH to successful GEOFON 20% run - adapted for CEED dataset
+# CRITICAL: encoder._name_: bidir-autoreg-encoder to match pretrained checkpoint!
+# Using lr=0.001 as requested
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_fine_tune_CEED_EXACT_MATCH
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+
+dataset:
+  _name_: ethz-phase-pick
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: CEED
+  norm_type: std
+  training_fraction: 1.0
+
+encoder:
+  pretrained: true
+
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: true
+  kernel_size: 3
+  dropout: 0.2
+
+loader:
+  batch_size: 64
+  num_workers: 12
+
+task:
+  _name_: phase_pick
+  loss: phase-pick
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step
+  disable_pretraining: true
+
+# Override lr to 0.001 as requested
+optimizer:
+  lr: 0.001
+  weight_decay: 0.05
+  betas: [0.9, 0.95]
+  fused: true
+  foreach: false
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  max_epochs: 40
+  precision: bf16-mixed
+  val_check_interval: 0.5
+  log_every_n_steps: 5
+  accumulate_grad_batches: 2

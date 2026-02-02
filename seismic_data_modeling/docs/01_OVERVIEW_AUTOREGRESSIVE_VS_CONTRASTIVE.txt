@@ -1,0 +1,755 @@
+================================================================================
+COMPREHENSIVE DOCUMENTATION: xLSTM SEISMIC MODELS
+PART 1: OVERVIEW - AUTOREGRESSIVE VS CONTRASTIVE LEARNING
+================================================================================
+
+Author: Auto-generated comprehensive documentation
+Date: 2025-11-30
+Purpose: Compare two fundamentally different pretraining strategies
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. Introduction
+2. The Two Configurations
+3. High-Level Philosophical Difference
+4. Side-by-Side Comparison Table
+5. Autoregressive Pretraining Explained
+6. Contrastive Pretraining Explained
+7. Key Architectural Differences
+8. Training Objective Differences
+9. Use Case Recommendations
+10. Quick Reference
+
+================================================================================
+1. INTRODUCTION
+================================================================================
+
+This documentation compares TWO FUNDAMENTALLY DIFFERENT approaches to
+pretraining xLSTM models for seismic waveform processing:
+
+CONFIG 1: pure_mlstm_sequential_12m_foundation.yaml
+- Pretraining method: AUTOREGRESSIVE MASKED RECONSTRUCTION
+- Inspired by: BERT, GPT (language models)
+- Key idea: Predict masked portions of input from unmasked context
+- Architecture: Pure sequential (24 deep layers)
+- ~12 million parameters
+
+CONFIG 2: xlstm_unet_seisbench.yaml
+- Pretraining method: CONTRASTIVE LEARNING + VECTOR QUANTIZATION
+- Inspired by: Wav2Vec 2.0 (speech recognition)
+- Key idea: Learn representations by distinguishing true context from negatives
+- Architecture: U-Net (multi-scale hierarchy)
+- ~11 million parameters
+
+CRITICAL DIFFERENCE:
+These aren't just different architectures - they represent TWO COMPLETELY
+DIFFERENT PHILOSOPHIES for self-supervised learning!
+
+================================================================================
+2. THE TWO CONFIGURATIONS
+================================================================================
+
+CONFIG 1: Autoregressive Foundation Model
+------------------------------------------
+File: configs/experiment/xlstm_large/pure_mlstm_sequential_12m_foundation.yaml
+
+Purpose: Learn to reconstruct masked waveforms
+Task: Regression (predict continuous values)
+Loss: Masked MSE (mean squared error on masked positions)
+What it learns: Statistical patterns in waveform continuation
+
+Training paradigm:
+  Input:  [Seismic waveform with 75% masked]
+  Output: [Reconstructed waveform]
+  Loss:   MSE(reconstructed[masked], original[masked])
+
+
+CONFIG 2: Contrastive Self-Supervised Model
+--------------------------------------------
+File: configs/experiment/contrastive/xlstm_unet_seisbench.yaml
+
+Purpose: Learn discriminative representations
+Task: Contrastive learning (identify true context vs distractors)
+Loss: InfoNCE contrastive loss + diversity loss (VQ)
+What it learns: Distinguishing features between different waveforms
+
+Training paradigm:
+  Input:  [Seismic waveform with 65% masked]
+  Output: [Context vectors] + [Quantized targets]
+  Loss:   -log(exp(sim(context, true_target)) / Σ exp(sim(context, negatives)))
+
+================================================================================
+3. HIGH-LEVEL PHILOSOPHICAL DIFFERENCE
+================================================================================
+
+AUTOREGRESSIVE (Config 1):
+"Teach the model what waveforms SHOULD look like"
+-------------------------
+
+Philosophy:
+- Model learns to generate/reconstruct plausible waveforms
+- Trained on pixel-level (sample-level) reconstruction
+- Captures fine-grained temporal patterns
+- Similar to: Language model predicting next words
+
+Analogy (Natural Language):
+  "The quick brown ___ jumped over the lazy ___"
+  Model fills in: "fox" and "dog" (reconstructs missing words)
+
+For seismic data:
+  Input:  [P-wave arrival] [____MASKED____] [S-wave arrival]
+  Output: Model reconstructs the masked middle section
+
+
+CONTRASTIVE (Config 2):
+"Teach the model what makes waveforms DIFFERENT from each other"
+-------------------------
+
+Philosophy:
+- Model learns high-level discriminative features
+- Trained to distinguish contexts from distractors
+- Captures semantic/structural differences
+- Similar to: Image recognition learning object features
+
+Analogy (Natural Language):
+  Given "The quick brown fox", which comes next?
+  A) "jumped over" (CORRECT - appears in actual sentence)
+  B) "ate pizza"   (WRONG - random distractor)
+  C) "went home"   (WRONG - random distractor)
+
+  Model learns to select A over B/C
+
+For seismic data:
+  Given: Context from earthquake waveform at time t
+  Question: Which quantized vector represents time t+Δt?
+  - True target from actual waveform
+  - 99 negative samples from other waveforms/times
+
+  Model learns to identify the correct continuation
+
+================================================================================
+4. SIDE-BY-SIDE COMPARISON TABLE
+================================================================================
+
+┌────────────────────────────┬─────────────────────┬─────────────────────┐
+│ ASPECT                     │ CONFIG 1            │ CONFIG 2            │
+│                            │ (Autoregressive)    │ (Contrastive)       │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ PRETRAINING PARADIGM                                                   │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Method                     │ Masked Reconstruct  │ Contrastive + VQ    │
+│ Inspired by                │ BERT / GPT          │ Wav2Vec 2.0         │
+│ Task type                  │ Regression          │ Contrastive         │
+│ Primary loss               │ Masked MSE          │ InfoNCE             │
+│ Output type                │ Continuous values   │ Discrete codes      │
+│ Learning objective         │ Predict masked data │ Distinguish contexts│
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ ARCHITECTURE                                                           │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Model name                 │ xlstm-unet          │ contrastive_wrapper │
+│ Backbone                   │ Sequential (flat)   │ U-Net (hierarchical)│
+│ use_unet                   │ False               │ True                │
+│ d_model                    │ 176                 │ 128                 │
+│ n_layers                   │ 24                  │ 3                   │
+│ Parameters                 │ ~12M                │ ~11M                │
+│ Depth strategy             │ Deep & narrow       │ Shallow & wide      │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ ENCODER                                                                │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Encoder type               │ bidir-autoreg       │ conv-down-contrastive│
+│ Method                     │ Conv subsample 4x   │ Conv subsample 4x   │
+│ Masking                    │ Simple random 75%   │ Span masking 65%    │
+│ Mask length                │ Single samples      │ Spans of 10 samples │
+│ Output dimension           │ 176                 │ 256                 │
+│ BERT-style masking         │ No                  │ No                  │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ DECODER                                                                │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Decoder type               │ upsampling-decoder  │ dummy               │
+│ Purpose                    │ Upsample 4x to 3ch  │ None (VQ handles)   │
+│ Output shape               │ [B, 4096, 3]        │ N/A                 │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ SPECIAL COMPONENTS                                                     │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Vector Quantization        │ No                  │ Yes (2 groups×320)  │
+│ Contrastive head           │ No                  │ Yes (project to 256)│
+│ Num negatives              │ N/A                 │ 100                 │
+│ Temperature                │ N/A                 │ 0.1                 │
+│ Diversity loss             │ No                  │ Yes (λ=0.1)         │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ MASKING STRATEGY                                                       │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Mask ratio                 │ 75%                 │ 65%                 │
+│ Mask type                  │ Random continuous   │ Span-based          │
+│ Mask span length           │ 1 (single samples)  │ 10 (continuous)     │
+│ Mask probability           │ 0.75 per sample     │ 0.65 via spans      │
+│ Channel masking            │ No                  │ Supported (0%)      │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ DATASET                                                                │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Datasets                   │ STEAD, MLAAPDE      │ 8 datasets combined │
+│                            │                     │ (ETHZ, GEOFON,      │
+│                            │                     │  STEAD, Instance,   │
+│                            │                     │  MLAAPDE, Iquique,  │
+│                            │                     │  PNW, OBST2024)     │
+│ Dataset size               │ ~Medium (~1M)       │ ~Large (~5M+)       │
+│ Training fraction          │ Implicit (100%)     │ 100%                │
+│ Sample length              │ 4096                │ 4096                │
+│ wav2vec mode               │ No                  │ Yes                 │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ TRAINING SETTINGS                                                      │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Batch size (per GPU)       │ 128                 │ 64                  │
+│ Num GPUs                   │ 2                   │ 4                   │
+│ Effective batch size       │ 256                 │ 256                 │
+│ Max epochs                 │ 55                  │ 50                  │
+│ Max steps                  │ 452,100             │ null (epoch-based)  │
+│ Precision                  │ bf16-mixed          │ bf16-mixed          │
+│ Val check interval         │ 1.0 epoch           │ 0.25 epoch          │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ OPTIMIZER                                                              │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Optimizer                  │ AdamW               │ AdamW               │
+│ Learning rate              │ 0.002               │ 0.001               │
+│ Weight decay               │ 0.01                │ (from base config)  │
+│ Betas                      │ [0.9, 0.95]         │ (from base config)  │
+│ Fused                      │ True                │ (from base config)  │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ SCHEDULER                                                              │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ Type                       │ Cosine warmup       │ Cosine warmup       │
+│ Warmup steps               │ 45,210 (10%)        │ 20% (dynamic)       │
+│ Total steps                │ 452,100             │ Dynamic             │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ MLSTM SETTINGS (shared)                                                │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ block_type                 │ mlstm               │ mlstm               │
+│ bidirectional              │ True                │ True                │
+│ mlstm_num_heads            │ 4                   │ 4                   │
+│ mlstm_conv1d_kernel_size   │ 4                   │ 4                   │
+│ mlstm_qkv_proj_blocksize   │ 8                   │ 4                   │
+│ mlstm_proj_factor          │ 2.0                 │ 2.0                 │
+│ dropout                    │ 0.1                 │ 0.1                 │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ TFLA KERNELS (shared)                                                  │
+├────────────────────────────┼─────────────────────┼─────────────────────┤
+│ enable_tflakernels         │ True                │ True                │
+│ chunk_size                 │ 128                 │ 128                 │
+│ chunkwise_kernel           │ triton_xl_chunk     │ triton_xl_chunk     │
+│ sequence_kernel            │ native_sequence__...│ native_sequence__...│
+│ step_kernel                │ triton              │ triton              │
+│ autocast_kernel_dtype      │ bfloat16            │ bfloat16            │
+└────────────────────────────┴─────────────────────┴─────────────────────┘
+
+================================================================================
+5. AUTOREGRESSIVE PRETRAINING EXPLAINED (Config 1)
+================================================================================
+
+WHAT IS AUTOREGRESSIVE PRETRAINING?
+-----------------------------------
+
+The model learns to predict/reconstruct data from partial observations.
+
+PROCESS:
+--------
+
+1. Take a clean seismic waveform: [B, 4096, 3]
+
+2. RANDOMLY MASK 75% of timesteps:
+   ```
+   Original:  [▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓]
+   Masked:    [▓▓░░░░▓░░░░░░░▓░░░░░░░░░▓▓░░░░]
+              ↑ ↑           ↑             ↑
+              Visible (25%) Masked (75%)
+   ```
+
+3. ENCODE with subsampling:
+   - Input: [B, 4096, 3]
+   - Conv subsample 4x: [B, 1024, 176]
+   - Now processing 1/4 the sequence length
+
+4. PROCESS through 24 deep bidirectional mLSTM layers:
+   - All at same resolution: [B, 1024, 176]
+   - Each layer sees full context (both directions)
+   - Learns long-range dependencies
+
+5. DECODE with upsampling:
+   - Upsample 4x: [B, 4096, 176]
+   - Project: [B, 4096, 3]
+   - Reconstruct original waveform
+
+6. COMPUTE LOSS (only on masked 75%):
+   ```python
+   loss = MSE(reconstructed[masked_positions], original[masked_positions])
+   ```
+
+7. BACKPROP and update weights
+
+
+WHY THIS WORKS:
+--------------
+
+By forcing the model to reconstruct missing data, it learns:
+- Temporal patterns (what typically follows what)
+- Statistical regularities (normal waveform shapes)
+- Physical constraints (wave propagation physics)
+- Context understanding (nearby samples constrain predictions)
+
+The model becomes a "waveform expert" - it knows what valid
+seismic signals look like.
+
+
+ANALOGY:
+-------
+
+Imagine reading text with words removed:
+  "The earthquake was _____ by seismometers around the _____"
+
+A good language model would predict:
+  "detected" and "world" (or "region", "area", etc.)
+
+Similarly, the seismic model learns:
+  Given P-wave arrival, predict the coda that follows
+  Given pre-event noise, predict the onset characteristics
+
+================================================================================
+6. CONTRASTIVE PRETRAINING EXPLAINED (Config 2)
+================================================================================
+
+WHAT IS CONTRASTIVE LEARNING?
+-----------------------------
+
+The model learns to distinguish CORRECT context from INCORRECT context.
+Instead of reconstructing pixels, it learns high-level representations.
+
+PROCESS:
+--------
+
+1. Take a clean seismic waveform: [B, 4096, 3]
+
+2. SPAN MASK 65% (in continuous chunks):
+   ```
+   Original:  [▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓]
+   Masked:    [▓▓▓░░░░░░░░▓▓▓▓░░░░░░░░░░▓▓▓▓▓]
+              ↑   ↑            ↑           ↑
+              Visible spans    Masked spans (length 10)
+   ```
+
+   Span masking is more challenging than random masking because
+   model can't just interpolate from neighbors.
+
+3. ENCODE with conv + masking:
+   - Conv subsample 4x: [B, 1024, 256]
+   - Apply masks to input
+   - Learn to represent masked waveforms
+
+4. PROCESS through U-Net backbone:
+   - Stage 0: [B, 1024, 128] → 3 mLSTM layers
+   - Down 4x: [B, 256, 256]
+   - Stage 1: [B, 256, 256] → 3 mLSTM layers
+   - Down 4x: [B, 64, 512]  (if pool=[4,4])
+   - Center: [B, 64, 512] → 3 mLSTM layers
+   - Up + skip: [B, 256, 256]
+   - Stage 3: [B, 256, 256] → 3 mLSTM layers
+   - Up + skip: [B, 1024, 128]
+   - Stage 4: [B, 1024, 128] → 3 mLSTM layers
+
+   Output: CONTEXT REPRESENTATIONS [B, 1024, 128]
+
+5. PROJECT to contrastive space:
+   - Context: [B, 1024, 128] → [B, 1024, 256]
+
+6. VECTOR QUANTIZATION (create targets):
+   ```python
+   # Quantizer learns discrete codebook
+   # 2 groups × 320 codes = 640 total codes
+   # Each group has 320 possible vectors
+
+   # For each masked position:
+   # Find closest code from codebook
+   quantized_target = VQ(true_waveform[masked_pos])
+
+   # This gives discrete "labels" for contrastive learning
+   ```
+
+7. SAMPLE 100 NEGATIVE EXAMPLES:
+   - For each masked position at time t:
+     * TRUE target: quantized[t]
+     * NEGATIVES: 100 other quantized vectors
+       (from different times, different samples in batch)
+
+8. COMPUTE CONTRASTIVE LOSS:
+   ```python
+   # For each masked position:
+   similarity_true = cosine_sim(context[t], quantized[t])
+   similarities_neg = [cosine_sim(context[t], neg_i) for neg_i in negatives]
+
+   # InfoNCE loss: maximize sim to true, minimize sim to negatives
+   logits = [similarity_true] + similarities_neg  # [1 + 100]
+   loss = -log(softmax(logits / temperature)[0])
+
+   # Also add diversity loss to encourage using all codebook entries
+   diversity_loss = lambda * (entropy of codebook usage)
+
+   total_loss = contrastive_loss + diversity_loss
+   ```
+
+9. BACKPROP and update weights
+
+
+WHY THIS WORKS:
+--------------
+
+By learning to distinguish contexts, the model learns:
+- DISCRIMINATIVE features (what makes waveforms different)
+- HIGH-LEVEL representations (not pixel-level details)
+- SEMANTIC understanding (earthquake vs noise, P-wave vs S-wave)
+- ROBUST features (works across different datasets)
+
+The model becomes a "waveform discriminator" - it knows what
+features distinguish different seismic events.
+
+
+ANALOGY:
+-------
+
+Instead of filling in blanks, imagine this task:
+
+Given: "The quick brown fox"
+Question: Which sentence comes next?
+  A) "jumped over the lazy dog" ← CORRECT (from same story)
+  B) "bought groceries at the store" ← WRONG (random sentence)
+  C) "solved the math problem" ← WRONG (random sentence)
+
+The model learns features that let it identify A as the true
+continuation, even without reconstructing exact words.
+
+For seismic data:
+  Given: Context from P-wave arrival
+  Question: Which pattern represents the next 10ms?
+  A) True S-wave pattern from this earthquake
+  B) Random noise from different recording
+  C) P-wave from different earthquake
+
+  Model learns to select A by understanding earthquake physics.
+
+
+KEY INSIGHT: Vector Quantization
+---------------------------------
+
+VQ converts continuous waveforms into discrete codes:
+  Continuous: [0.53, -0.21, 0.87, ...]
+  Discrete:   Code #237 (from codebook of 640)
+
+Benefits:
+  1. Easier contrastive learning (discrete matching)
+  2. Compression (represent complex patterns with single code)
+  3. Semantic grouping (similar waveforms → same code)
+  4. Regularization (limits capacity, prevents overfitting)
+
+The codebook learns to represent common seismic patterns:
+  - Code #1: P-wave onset
+  - Code #2: S-wave onset
+  - Code #3: Surface wave
+  - Code #4: Background noise
+  - ...
+  - Code #640: Rare exotic pattern
+
+================================================================================
+7. KEY ARCHITECTURAL DIFFERENCES
+================================================================================
+
+DEPTH vs BREADTH:
+-----------------
+
+CONFIG 1 (Autoregressive):
+  - DEEP: 24 layers
+  - NARROW: d_model=176
+  - SEQUENTIAL: All layers at same resolution
+  - Philosophy: "Go deep to capture long-range dependencies"
+
+CONFIG 2 (Contrastive):
+  - SHALLOW: 3 layers per stage (15 total)
+  - WIDER: d_model=128, but multi-scale
+  - HIERARCHICAL: U-Net with skip connections
+  - Philosophy: "Go wide across scales to capture multi-resolution features"
+
+
+SEQUENCE LENGTH PROCESSING:
+---------------------------
+
+CONFIG 1:
+  - Input: 4096 samples
+  - Encoder subsamples 4x → 1024 tokens
+  - All 24 layers process 1024 tokens
+  - Decoder upsamples 4x → 4096 samples
+  - Efficient: Process shorter sequence at full depth
+
+CONFIG 2:
+  - Input: 4096 samples
+  - Encoder subsamples 4x → 1024 tokens
+  - U-Net progressively downsamples:
+    * Level 0: 1024 tokens @ d=128 (3 layers)
+    * Level 1: 256 tokens @ d=256 (3 layers)
+    * Level 2: 64 tokens @ d=512 (3 layers)
+    * Then back up with skip connections
+  - Multi-resolution: Different scales see different details
+
+
+INFORMATION FLOW:
+-----------------
+
+CONFIG 1 (Autoregressive):
+  ```
+  Input [4096, 3]
+    ↓ Encode (subsample 4x)
+  [1024, 176]
+    ↓ Layer 1 (bidir mLSTM)
+  [1024, 176]
+    ↓ Layer 2
+  [1024, 176]
+    ↓ ... (22 more layers)
+  [1024, 176]
+    ↓ Decode (upsample 4x)
+  Output [4096, 3]
+  ```
+
+  Linear flow with residual connections
+
+CONFIG 2 (Contrastive):
+  ```
+  Input [4096, 3]
+    ↓ Encode (subsample 4x, mask)
+  [1024, 256] ─────────┐
+    ↓ 3 layers         │ Skip 1
+  [1024, 128]          │
+    ↓ Pool 4x          │
+  [256, 256] ─────┐    │
+    ↓ 3 layers    │    │ Skip 2
+  [256, 256]      │    │
+    ↓ Pool 4x     │    │
+  [64, 512]       │    │
+    ↓ 3 layers    │    │
+  [64, 512]       │    │
+    ↓ Unpool 4x   │    │
+  [256, 256] ←────┘    │
+    ↓ 3 layers         │
+  [256, 256]           │
+    ↓ Unpool 4x        │
+  [1024, 128] ←────────┘
+    ↓ 3 layers
+  Context [1024, 128]
+    ↓ Project
+  [1024, 256] → Contrastive loss
+  ```
+
+  U-shaped flow with multi-scale skip connections
+
+
+SKIP CONNECTIONS:
+-----------------
+
+CONFIG 1:
+  - Residual connections within each layer
+  - No long-range skip connections
+  - Information flows sequentially through 24 layers
+
+CONFIG 2:
+  - Residual connections within each layer
+  - U-Net skip connections across scales
+  - Encoder features directly added to decoder
+  - Preserves fine details while processing at multiple scales
+
+================================================================================
+8. TRAINING OBJECTIVE DIFFERENCES
+================================================================================
+
+WHAT THE MODEL OPTIMIZES:
+-------------------------
+
+CONFIG 1 (Autoregressive):
+
+  Objective: Minimize reconstruction error
+
+  ```python
+  loss = MSE(predicted[masked], original[masked])
+  ```
+
+  Gradients push model to:
+  - Match exact waveform amplitudes
+  - Preserve phase relationships
+  - Reproduce frequency content
+  - Minimize L2 distance to ground truth
+
+  Model learns: "What should this waveform look like?"
+
+
+CONFIG 2 (Contrastive):
+
+  Objective: Maximize context-target similarity, minimize context-negative similarity
+
+  ```python
+  # InfoNCE loss
+  sim_pos = dot(context, true_target) / temperature
+  sim_negs = [dot(context, neg_i) / temperature for neg_i in negatives]
+
+  logits = concat([sim_pos], sim_negs)
+  loss = -log(softmax(logits)[0])
+
+  # Plus diversity loss
+  loss += lambda * diversity_loss
+  ```
+
+  Gradients push model to:
+  - Learn discriminative features
+  - Separate different waveform types in embedding space
+  - Use diverse codebook entries (avoid mode collapse)
+  - Not focus on exact amplitude reconstruction
+
+  Model learns: "What features distinguish this waveform from others?"
+
+
+WHAT THE MODEL IGNORES:
+-----------------------
+
+CONFIG 1 (Autoregressive):
+  - Ignores unmasked 25% (model sees true values)
+  - Optimizes for pixel-perfect reconstruction
+  - May overfit to dataset-specific noise patterns
+  - Less emphasis on high-level semantic features
+
+CONFIG 2 (Contrastive):
+  - Ignores exact amplitude values
+  - Optimizes for discriminative embeddings
+  - Robust to noise (VQ provides regularization)
+  - More emphasis on structural/semantic patterns
+
+
+DOWNSTREAM TASK IMPLICATIONS:
+-----------------------------
+
+CONFIG 1 (Autoregressive) is better for:
+  - Tasks requiring precise waveform reconstruction
+  - Denoising / signal enhancement
+  - Waveform interpolation / extrapolation
+  - Generative modeling
+  - Tasks where exact amplitudes matter
+
+CONFIG 2 (Contrastive) is better for:
+  - Classification tasks (event detection, phase ID)
+  - Few-shot learning (limited labeled data)
+  - Transfer learning across different seismometer networks
+  - Robust feature extraction
+  - Tasks where high-level patterns matter more than amplitudes
+
+================================================================================
+9. USE CASE RECOMMENDATIONS
+================================================================================
+
+CHOOSE CONFIG 1 (Autoregressive) WHEN:
+--------------------------------------
+
+✓ You need a general-purpose foundation model
+✓ Planning to fine-tune on multiple downstream tasks
+✓ Exact waveform reconstruction quality matters
+✓ You have compute budget for deep sequential model
+✓ Working with well-curated, homogeneous dataset
+✓ Target tasks involve regression (magnitude, location)
+✓ You want simplest architecture (no VQ complexity)
+✓ Inspired by success of GPT/BERT in NLP
+
+Example use cases:
+  - Waveform denoising
+  - Missing data imputation
+  - Magnitude estimation
+  - Location refinement
+  - General foundation model
+
+
+CHOOSE CONFIG 2 (Contrastive) WHEN:
+-----------------------------------
+
+✓ You need robust features for classification
+✓ Working with heterogeneous multi-dataset pretraining
+✓ Planning transfer learning across seismometer networks
+✓ Limited fine-tuning data available
+✓ Target tasks are classification (phase picking, detection)
+✓ You want multi-scale feature extraction (U-Net)
+✓ Inspired by success of Wav2Vec/SimCLR in speech/vision
+
+Example use cases:
+  - Phase picking
+  - Event vs noise classification
+  - First-motion polarity
+  - Transfer learning to new regions
+  - Few-shot earthquake type classification
+
+
+COMBINE BOTH APPROACHES:
+------------------------
+
+Best strategy might be:
+  1. Pretrain with contrastive (Config 2) for robust features
+  2. Fine-tune with autoregressive objective for task-specific adaptation
+  3. Or ensemble both models for complementary strengths
+
+Research shows contrastive + autoregressive can outperform either alone!
+
+================================================================================
+10. QUICK REFERENCE
+================================================================================
+
+CONFIG 1: pure_mlstm_sequential_12m_foundation.yaml
+---------------------------------------------------
+
+Key characteristics:
+  • Method: Autoregressive masked reconstruction
+  • Architecture: Sequential (24 layers @ d=176)
+  • Loss: Masked MSE
+  • Masking: 75% random
+  • Datasets: STEAD + MLAAPDE
+  • Best for: General foundation model, reconstruction tasks
+
+Command to run:
+  python simple_train.py experiment=xlstm_large/pure_mlstm_sequential_12m_foundation
+
+
+CONFIG 2: xlstm_unet_seisbench.yaml
+------------------------------------
+
+Key characteristics:
+  • Method: Contrastive learning + Vector Quantization
+  • Architecture: U-Net (3 layers/stage @ d=128)
+  • Loss: InfoNCE + Diversity
+  • Masking: 65% span-based
+  • Datasets: 8 combined (ETHZ, GEOFON, STEAD, etc.)
+  • Best for: Classification tasks, transfer learning
+
+Command to run:
+  python simple_train.py experiment=contrastive/xlstm_unet_seisbench
+
+
+SHARED ELEMENTS:
+---------------
+  ✓ Both use mLSTM blocks
+  ✓ Both use bidirectional processing
+  ✓ Both use TFLA Triton kernels
+  ✓ Both use AdamW + cosine warmup
+  ✓ Both use bfloat16 mixed precision
+  ✓ Both target ~11-12M parameters
+  ✓ Both process 4096-sample sequences
+
+
+MAIN DIFFERENCE IN ONE SENTENCE:
+--------------------------------
+
+Config 1 learns to RECONSTRUCT waveforms through deep sequential processing,
+while Config 2 learns to DISCRIMINATE waveforms through contrastive learning
+with vector quantization in a multi-scale U-Net.
+
+================================================================================
+END OF PART 1: OVERVIEW
+Next: Part 2 - CONFIG 1 (Autoregressive) Deep Dive
+================================================================================

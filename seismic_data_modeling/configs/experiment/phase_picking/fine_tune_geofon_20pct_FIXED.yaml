@@ -1,0 +1,88 @@
+# @package _global_
+# Fine-tune GEOFON 20% with OLD pretraining checkpoint - FIXED VERSION
+# BUG FIX: Must use encoder._name_: bidir-autoreg-encoder (was missing!)
+# Previous attempts stuck at val/loss 0.06 because encoder type was wrong!
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_fine_tune_GEOFON_20pct_FIXED
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: GEOFON
+  norm_type: std
+  training_fraction: 0.2  # 20% of data
+
+# CRITICAL FIX: Must match the pretrained checkpoint's encoder type!
+encoder:
+  _name_: bidir-autoreg-encoder  # ← THIS WAS MISSING!
+  pretrained: true
+
+decoder:
+  _name_: double-conv-phase-pick
+  kernel_size: 3
+  dropout: 0.2
+  upsample: true
+
+loader:
+  batch_size: 128  # Same as successful old run
+  num_workers: 12
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+
+optim:
+  clip_grad_norm: 1.0
+
+optimizer:
+  _name_: adamw
+  lr: 0.0002
+  weight_decay: 0.005
+  betas: [0.9, 0.95]
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: null
+  num_training_steps: null
+  warmup_fraction: 0.1
+
+task:
+  _name_: phase_pick
+  loss: phase-pick
+
+train:
+  monitor: val/loss
+  mode: min
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+  interval: step
+  disable_pretraining: true
+
+trainer:
+  accelerator: gpu
+  strategy: auto
+  devices: 1
+  accumulate_grad_batches: 1  # batch_size 128 is already large enough
+  max_epochs: 40
+  gradient_clip_val: 0.0
+  log_every_n_steps: 5
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: false
+  precision: bf16-mixed
+  max_steps: -1
+  val_check_interval: 0.5

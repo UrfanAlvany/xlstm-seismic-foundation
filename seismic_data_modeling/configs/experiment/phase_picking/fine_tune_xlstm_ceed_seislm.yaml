@@ -1,0 +1,82 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_phasepick_CEED_SeisLMStyle
+
+model:
+  # Best pretraining checkpoint (by val/loss)
+  pretrained: final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step
+
+  # Ensure we use task loss (not contrastive) during fine-tuning
+  disable_pretraining: True
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: CEED
+  norm_type: std
+  training_fraction: 1.0
+
+encoder:
+  pretrained: True
+
+decoder:
+  _name_: double-conv-phase-pick
+  kernel_size: 3
+  dropout: 0.2
+  # The xLSTM contrastive backbone outputs feature dim = final_projection_dim (usually 256)
+  manual_input_dim: 256
+  # Restore per-frame resolution for picking
+  upsample: true
+  upsample_by: 4
+  output_len: 4096
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 2
+
+# SeisLM-style optimizer & schedule
+optimizer:
+  lr: 0.001
+  weight_decay: 0.1
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  # Let code infer steps; specify warmup fraction like SeisLM
+  warmup_fraction: 0.1
+  num_training_steps: null
+  num_warmup_steps: null
+
+trainer:
+  max_steps: -1
+  val_check_interval: 0.5
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  max_epochs: 30
+  precision: bf16-mixed
+  enable_model_summary: false
+  log_every_n_steps: 5
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 2
+
+optim:
+  clip_grad_norm: 1.0

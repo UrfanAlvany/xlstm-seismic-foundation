@@ -1,0 +1,6 @@
+[submodule "s4"]
+	path = s4
+	url = https://github.com/kian-hunziker/s4.git
+[submodule "hydra"]
+	path = hydra
+	url = https://github.com/kian-hunziker/hydra.git

@@ -1,0 +1,1464 @@
+================================================================================
+COMPREHENSIVE DOCUMENTATION: xLSTM SEISMIC MODELS
+PART 3: CONFIG 2 - CONTRASTIVE xLSTM U-NET DEEP DIVE
+================================================================================
+
+Configuration: xlstm_unet_seisbench.yaml
+Method: Contrastive Learning + Vector Quantization
+Architecture: U-Net (Multi-scale hierarchy)
+Parameters: ~11 Million
+Purpose: Wav2Vec 2.0-style self-supervised pretraining
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. Full Configuration Breakdown
+2. Architecture Details (U-Net)
+3. Contrastive Learning Pipeline
+4. Vector Quantization System
+5. Data Flow with Tensor Shapes
+6. Component-by-Component Code Analysis
+7. Span Masking Strategy
+8. Training Process Step-by-Step
+9. InfoNCE Loss Explained
+10. Code Implementation Mapping
+
+================================================================================
+1. FULL CONFIGURATION BREAKDOWN
+================================================================================
+
+FILE LOCATION:
+-------------
+/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/
+configs/experiment/contrastive/xlstm_unet_seisbench.yaml
+
+COMPLETE CONFIGURATION (annotated):
+-----------------------------------
+
+```yaml
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: contrastive              # *** CONTRASTIVE TASK ***
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: contrastive_wrapper     # *** CONTRASTIVE WRAPPER MODEL ***
+
+experiment_name: WAV2VEC_xlstm_unet_SEISBENCH
+
+# ============================================================================
+# MODEL CONFIGURATION - CONTRASTIVE WRAPPER
+# ============================================================================
+model:
+  model_backbone: 'xlstm_unet'      # Use xLSTM U-Net as backbone
+
+  # ========== U-Net Architecture ==========
+  d_model: 128                      # Base hidden dimension
+  n_layers: 3                       # Layers per stage (shallower than Config 1)
+  expand: 2                         # Channel expansion factor
+  pool: [4, 4]                      # Pooling factors
+  bidirectional: true               # Bidirectional processing
+  use_unet: True                    # *** CRITICAL: Enable U-Net structure ***
+
+  dropout: 0.10                     # Dropout probability
+
+  # ========== mLSTM Settings ==========
+  mlstm_num_heads: 4                # 4 attention heads
+  mlstm_conv1d_kernel_size: 4       # Causal conv kernel
+  mlstm_qkv_proj_blocksize: 4       # Block size for QKV
+  mlstm_proj_factor: 2.0            # Projection expansion
+  ff_proj_factor: 1.6               # Feedforward expansion
+  ff_act_fn: gelu                   # GELU activation
+
+  # ========== TFLA Kernels ==========
+  enable_tflakernels: true          # Enable Triton kernels
+  chunk_size: 128                   # Chunk size
+  chunkwise_kernel: 'chunkwise--triton_xl_chunk'
+  sequence_kernel: 'native_sequence__triton'
+  step_kernel: 'triton'
+  autocast_kernel_dtype: 'bfloat16'
+
+  # ========== CONTRASTIVE LEARNING SETTINGS ==========
+  final_projection_dim: 256         # Projection dimension for contrastive
+  num_negatives: 100                # Number of negative samples
+  temperature: 0.1                  # Temperature for softmax
+  quantize: true                    # *** Enable vector quantization ***
+  use_mem_eff_path: true            # Memory-efficient implementation
+  only_masked: false                # Compute loss on all positions (not just masked)
+
+  # ========== VECTOR QUANTIZATION SETTINGS ==========
+  quantizer_args:
+    num_codevector_groups: 2        # 2 codebook groups
+    num_codevectors_per_group: 320  # 320 codes per group = 640 total
+    conv_dim: [256]                 # Convolutional dimension for quantizer
+    codevector_dim: 256             # Dimension of each code vector
+    scale_logits_in_quantization: true  # Scale logits for stability
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+train:
+  monitor: val/loss                 # Monitor validation loss
+  mode: min                         # Minimize
+  diversity_lambda: 0.1             # *** Weight for diversity loss (VQ) ***
+  clip_grad_norm: 1.0               # Gradient clipping
+
+  # Gumbel softmax temperature schedule (for VQ)
+  gumbel_min_temperature: 0.5       # Minimum temperature
+  gumbel_max_temperature: 2.0       # Maximum temperature (start high, anneal down)
+
+# ============================================================================
+# OPTIMIZER CONFIGURATION
+# ============================================================================
+optimizer:
+  lr: 0.001                         # Learning rate (half of Config 1)
+
+# ============================================================================
+# DATASET CONFIGURATION
+# ============================================================================
+dataset:
+  dataset_name:                     # *** 8 DATASETS COMBINED ***
+    - ETHZ
+    - GEOFON
+    - STEAD
+    - InstanceCounts
+    - MLAAPDE
+    - Iquique
+    - PNW
+    - OBST2024
+  training_fraction: 1.0            # Use all data
+  sample_len: 4096                  # Sequence length
+  bits: 0                           # No quantization
+  d_data: 3                         # 3-component
+  norm_type: std                    # Standardization
+  wav2vec: true                     # *** Wav2Vec mode (no AR targets) ***
+
+# ============================================================================
+# ENCODER CONFIGURATION - SPAN MASKING
+# ============================================================================
+encoder:
+  _name_: conv-down-encoder-contrastive  # Contrastive encoder
+  kernel_size: 3                    # Conv kernel size
+  n_layers: 2                       # 2 conv layers = 4x subsampling
+  dim: 256                          # Intermediate dimension
+  stride: 2                         # Stride per layer
+
+  # ========== MASKING SETTINGS (Wav2Vec 2.0 style) ==========
+  mask_prob: 0.65                   # 65% of spans are masked
+  mask_length: 10                   # Each span is 10 timesteps
+  mask_channel_prob: 0.0            # No channel masking
+  mask_channel_length: 1
+  bert_style: false                 # Not BERT-style (no [MASK] token)
+
+# ============================================================================
+# DECODER CONFIGURATION
+# ============================================================================
+decoder:
+  _name_: dummy                     # *** No decoder needed (contrastive head instead) ***
+
+# ============================================================================
+# DATALOADER CONFIGURATION
+# ============================================================================
+loader:
+  batch_size: 64                    # Batch size per GPU
+  num_workers: 24                   # Data loading workers
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 8
+
+# ============================================================================
+# SCHEDULER CONFIGURATION
+# ============================================================================
+scheduler:
+  _name_: cosine_warmup
+  warmup_fraction: 0.2              # 20% warmup (vs 10% in Config 1)
+  num_warmup_steps: null            # Computed dynamically
+  num_training_steps: null          # Computed dynamically
+
+# ============================================================================
+# TRAINER CONFIGURATION
+# ============================================================================
+trainer:
+  strategy: ddp                     # DistributedDataParallel
+  devices: 4                        # *** 4 GPUs (vs 2 in Config 1) ***
+  accumulate_grad_batches: 1
+  max_steps: null                   # Use epochs instead
+  max_epochs: 50                    # 50 epochs
+  precision: bf16-mixed             # Mixed precision
+  gradient_clip_val: 0.0            # Manual clipping used
+  log_every_n_steps: 100
+  val_check_interval: 0.25          # Validate 4x per epoch (vs 1x in Config 1)
+```
+
+================================================================================
+2. ARCHITECTURE DETAILS (U-NET)
+================================================================================
+
+U-NET STRUCTURE:
+----------------
+
+Unlike Config 1, this uses use_unet: True, creating a hierarchical architecture.
+
+With pool=[4, 4] and expand=2:
+  - Number of stages: 2 × len(pool) + 1 = 5 stages
+  - Number of resolution levels: 3
+
+Stage layout:
+```
+ENCODER PATH (downsampling):
+  Stage 0: [B, 1024, 128]  → 3 bidir mLSTM layers
+  ↓ pool 4x, expand channels 2x
+  Stage 1: [B, 256, 256]   → 3 bidir mLSTM layers
+  ↓ pool 4x, expand channels 2x
+
+CENTER (bottleneck):
+  Stage 2: [B, 64, 512]    → 3 bidir mLSTM layers
+
+DECODER PATH (upsampling with skip connections):
+  ↑ unpool 4x, add skip from Stage 1
+  Stage 3: [B, 256, 256]   → 3 bidir mLSTM layers
+  ↑ unpool 4x, add skip from Stage 0
+  Stage 4: [B, 1024, 128]  → 3 bidir mLSTM layers
+```
+
+DETAILED STAGE BREAKDOWN:
+-------------------------
+
+INPUT (after encoder):
+  Shape: [B, 1024, 256] from ConvDownEncoderContrastive
+
+PROJECTION to U-Net dimension:
+  Linear: [B, 1024, 256] → [B, 1024, 128]
+
+STAGE 0 (Encoder - Level 0):
+  Input: [B, 1024, 128]
+  Processing:
+    - Layer 0: Bidirectional mLSTM @ d=128
+    - Layer 1: Bidirectional mLSTM @ d=128
+    - Layer 2: Bidirectional mLSTM @ d=128
+  Output: [B, 1024, 128]
+  Skip saved for Stage 4
+
+DOWN-POOL 0→1:
+  Method: Fold + linear projection
+  Input:  [B, 1024, 128]
+  Fold by 4: [B, 256, 512]
+  Linear: [B, 256, 512] → [B, 256, 256]
+  Output: [B, 256, 256]
+
+STAGE 1 (Encoder - Level 1):
+  Input: [B, 256, 256]
+  Processing: 3 × bidirectional mLSTM @ d=256
+  Output: [B, 256, 256]
+  Skip saved for Stage 3
+
+DOWN-POOL 1→2:
+  Input:  [B, 256, 256]
+  Fold by 4: [B, 64, 1024]
+  Linear: [B, 64, 1024] → [B, 64, 512]
+  Output: [B, 64, 512]
+
+STAGE 2 (Center - Level 2):
+  Input: [B, 64, 512]
+  Processing: 3 × bidirectional mLSTM @ d=512
+  Output: [B, 64, 512]
+  No skip (bottleneck)
+
+UP-POOL 2→3:
+  Input: [B, 64, 512]
+  Upsample by 4: [B, 256, 512]
+  Linear: [B, 256, 512] → [B, 256, 256]
+  Add skip from Stage 1: [B, 256, 256]
+  Output: [B, 256, 256]
+
+STAGE 3 (Decoder - Level 1):
+  Input: [B, 256, 256] (with skip)
+  Processing: 3 × bidirectional mLSTM @ d=256
+  Output: [B, 256, 256]
+
+UP-POOL 3→4:
+  Input: [B, 256, 256]
+  Upsample by 4: [B, 1024, 256]
+  Linear: [B, 1024, 256] → [B, 1024, 128]
+  Add skip from Stage 0: [B, 1024, 128]
+  Output: [B, 1024, 128]
+
+STAGE 4 (Decoder - Level 0):
+  Input: [B, 1024, 128] (with skip)
+  Processing: 3 × bidirectional mLSTM @ d=128
+  Output: [B, 1024, 128]
+
+OUTPUT:
+  Context representations: [B, 1024, 128]
+  These go to the contrastive head
+
+
+TOTAL LAYERS:
+-------------
+
+5 stages × 3 layers/stage = 15 total bidirectional mLSTM layers
+
+This is SHALLOWER than Config 1 (24 layers), but compensated by:
+  - Multi-scale processing (3 resolution levels)
+  - Skip connections (preserve information)
+  - Wider channels at bottleneck (512 vs 176)
+
+
+PARAMETER ANALYSIS:
+------------------
+
+Stage 0: 3 layers @ d=128  → ~150K params/layer → ~450K
+Stage 1: 3 layers @ d=256  → ~600K params/layer → ~1.8M
+Stage 2: 3 layers @ d=512  → ~2.4M params/layer → ~7.2M
+Stage 3: 3 layers @ d=256  → ~600K params/layer → ~1.8M
+Stage 4: 3 layers @ d=128  → ~150K params/layer → ~450K
+
+Total mLSTM: ~11.7M parameters
+
+Plus encoder, pooling/unpooling, contrastive head, VQ codebooks:
+  ~1-2M additional parameters
+
+TOTAL: ~11-13M parameters (similar to Config 1 despite different architecture!)
+
+================================================================================
+3. CONTRASTIVE LEARNING PIPELINE
+================================================================================
+
+HIGH-LEVEL OVERVIEW:
+-------------------
+
+Contrastive learning learns by distinguishing POSITIVE pairs from NEGATIVE pairs.
+
+For each masked position:
+  POSITIVE: True future context from the same waveform
+  NEGATIVES: Contexts from other positions/waveforms (distractors)
+
+The model learns to maximize similarity to positives and minimize similarity to negatives.
+
+PIPELINE STEPS:
+--------------
+
+1. INPUT: Raw waveform [B, 4096, 3]
+
+2. ENCODER: Subsample + Span mask
+   - Subsample 4x: [B, 1024, 256]
+   - Apply span masks (65% of spans)
+   - Output: Masked features
+
+3. BACKBONE: U-Net processing
+   - Multi-scale feature extraction
+   - Output: Context representations [B, 1024, 128]
+
+4. PROJECT: Context to contrastive space
+   - Linear: [B, 1024, 128] → [B, 1024, 256]
+   - These are "context vectors"
+
+5. QUANTIZE: Original waveform → discrete codes
+   - VQ takes unmasked waveform
+   - Converts to discrete codes
+   - Output: Quantized targets [B, 1024, 256]
+
+6. SAMPLE NEGATIVES: For each position, sample 100 distractors
+
+7. COMPUTE SIMILARITY:
+   - Positive: similarity(context[t], quantized[t])
+   - Negatives: similarity(context[t], [100 random quantized vectors])
+
+8. CONTRASTIVE LOSS (InfoNCE):
+   - Force model to select correct quantized target from 101 options
+   - Plus diversity loss to encourage codebook usage
+
+9. BACKPROP: Update all components
+
+================================================================================
+4. VECTOR QUANTIZATION SYSTEM
+================================================================================
+
+WHAT IS VECTOR QUANTIZATION?
+----------------------------
+
+VQ converts continuous representations into discrete codes from a learned codebook.
+
+Think of it like K-means clustering:
+  - Codebook: K cluster centers (learned)
+  - Quantization: Assign each vector to nearest center
+  - Output: Discrete code index
+
+CONFIGURATION:
+-------------
+
+```yaml
+quantizer_args:
+  num_codevector_groups: 2          # G groups
+  num_codevectors_per_group: 320    # V codes per group
+  conv_dim: [256]
+  codevector_dim: 256               # D dimension
+  scale_logits_in_quantization: true
+```
+
+This creates:
+  - 2 groups × 320 codes = 640 total code vectors
+  - Each code vector: 256-dimensional
+  - Total codebook parameters: 2 × 320 × 256 = 163,840
+
+CODEBOOK STRUCTURE:
+------------------
+
+```
+Group 0:
+  Code 0:   [v0,0,  v0,1,  ..., v0,255]   # 256-dim vector
+  Code 1:   [v1,0,  v1,1,  ..., v1,255]
+  ...
+  Code 319: [v319,0, ..., v319,255]
+
+Group 1:
+  Code 0:   [v0,0,  ..., v0,255]
+  Code 1:   [v1,0,  ..., v1,255]
+  ...
+  Code 319: [v319,0, ..., v319,255]
+```
+
+WHY TWO GROUPS?
+--------------
+
+Product quantization: More expressive with fewer parameters
+  - Single group: 640 codes × 256 dim = 163,840 params
+  - Two groups: Concatenate codes from each group
+    * Pick code from group 0: 128-dim
+    * Pick code from group 1: 128-dim
+    * Concatenate: 256-dim
+  - Effective codebook size: 320 × 320 = 102,400 possible combinations!
+
+But only 640 learned vectors instead of 102,400.
+
+QUANTIZATION PROCESS:
+--------------------
+
+Input: Continuous feature [B, T, 256]
+
+Step 1: Split into groups
+  Group 0 input: [B, T, 128] (first half)
+  Group 1 input: [B, T, 128] (second half)
+
+Step 2: For each group, find nearest code
+  ```python
+  # Group 0
+  distances_0 = ||input_0 - codebook_0[i]||^2 for i in 0..319
+  code_idx_0 = argmin(distances_0)  # Integer in [0, 319]
+
+  # Group 1
+  distances_1 = ||input_1 - codebook_1[j]||^2 for j in 0..319
+  code_idx_1 = argmin(distances_1)  # Integer in [0, 319]
+  ```
+
+Step 3: Retrieve codes and concatenate
+  ```python
+  quantized_0 = codebook_0[code_idx_0]  # [128]
+  quantized_1 = codebook_1[code_idx_1]  # [128]
+  quantized = concat([quantized_0, quantized_1])  # [256]
+  ```
+
+Output: Quantized vector [B, T, 256] (same shape as input, but discrete)
+
+GUMBEL SOFTMAX:
+--------------
+
+During training, hard argmax is non-differentiable.
+Use Gumbel-Softmax for soft approximation:
+
+```python
+# Compute similarities (logits)
+logits = -distances / temperature
+
+# Gumbel-Softmax
+gumbel_noise = -log(-log(uniform(0, 1)))
+probs = softmax((logits + gumbel_noise) / gumbel_temp)
+
+# Soft selection (differentiable)
+quantized = sum(probs[i] * codebook[i] for i in range(320))
+```
+
+Temperature annealing:
+  - Start: gumbel_temp = 2.0 (soft, smooth gradients)
+  - End: gumbel_temp = 0.5 (hard, discrete)
+
+DIVERSITY LOSS:
+--------------
+
+Without regularization, model might only use a few codes (mode collapse).
+
+Diversity loss encourages uniform codebook usage:
+
+```python
+# Count code usage across batch
+code_counts = histogram(code_indices)  # [V]
+
+# Compute entropy
+probs = code_counts / sum(code_counts)
+entropy = -sum(probs * log(probs))
+
+# Maximize entropy (uniform distribution has max entropy)
+diversity_loss = -entropy
+
+# Or perplexity-based
+perplexity = exp(entropy)
+diversity_loss = -log(perplexity)
+
+# Weighted in total loss
+total_loss = contrastive_loss + diversity_lambda * diversity_loss
+```
+
+With diversity_lambda = 0.1, encourages using all 640 codes.
+
+================================================================================
+5. DATA FLOW WITH TENSOR SHAPES
+================================================================================
+
+COMPLETE FORWARD PASS:
+---------------------
+
+STEP 1: INPUT
+-------------
+Raw waveform: [64, 4096, 3]  (batch_size=64)
+
+STEP 2: ENCODER (ConvDownEncoderContrastive)
+--------------------------------------------
+
+Conv1D layer 1 (stride=2):
+  Input:  [64, 4096, 3]
+  Output: [64, 2048, 256]
+
+Conv1D layer 2 (stride=2):
+  Input:  [64, 2048, 256]
+  Output: [64, 1024, 256]
+
+Total subsampling: 4x (4096 → 1024)
+
+SPAN MASKING (applied to features):
+  Create span mask:
+    - mask_prob = 0.65
+    - mask_length = 10
+    - Approximately 65% of spans are masked
+
+  Example mask:
+    [0 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0 ...]
+     ↑       ↑                   ↑
+     Visible Masked span (10)    Visible
+
+  Apply mask:
+    features_masked = features.clone()
+    features_masked[mask] = mask_embedding
+
+Encoder output: [64, 1024, 256]
+
+STEP 3: BACKBONE (xLSTMUNetBackbone - U-Net mode)
+-------------------------------------------------
+
+Project to U-Net dimension:
+  Input:  [64, 1024, 256]
+  Output: [64, 1024, 128]
+
+Stage 0 (Encoder):
+  Input:  [64, 1024, 128]
+  3 bidir mLSTM layers @ d=128
+  Output: [64, 1024, 128]
+  Skip saved
+
+Down-pool 0:
+  Fold 4x: [64, 256, 512]
+  Linear: [64, 256, 256]
+
+Stage 1 (Encoder):
+  Input:  [64, 256, 256]
+  3 bidir mLSTM layers @ d=256
+  Output: [64, 256, 256]
+  Skip saved
+
+Down-pool 1:
+  Fold 4x: [64, 64, 1024]
+  Linear: [64, 64, 512]
+
+Stage 2 (Center):
+  Input:  [64, 64, 512]
+  3 bidir mLSTM layers @ d=512
+  Output: [64, 64, 512]
+
+Up-pool 0:
+  Upsample 4x: [64, 256, 512]
+  Linear: [64, 256, 256]
+  Add skip from Stage 1: [64, 256, 256]
+
+Stage 3 (Decoder):
+  Input:  [64, 256, 256]
+  3 bidir mLSTM layers @ d=256
+  Output: [64, 256, 256]
+
+Up-pool 1:
+  Upsample 4x: [64, 1024, 256]
+  Linear: [64, 1024, 128]
+  Add skip from Stage 0: [64, 1024, 128]
+
+Stage 4 (Decoder):
+  Input:  [64, 1024, 128]
+  3 bidir mLSTM layers @ d=128
+  Output: [64, 1024, 128]
+
+Backbone output: [64, 1024, 128]
+
+STEP 4: CONTRASTIVE HEAD PROJECTION
+-----------------------------------
+
+Linear projection:
+  Input:  [64, 1024, 128]
+  Output: [64, 1024, 256]
+
+These are CONTEXT vectors.
+
+STEP 5: VECTOR QUANTIZATION (on unmasked waveform)
+--------------------------------------------------
+
+Input: Original waveform (unmasked) [64, 4096, 3]
+
+Encoder (same as step 2, but no masking):
+  Conv subsample: [64, 4096, 3] → [64, 1024, 256]
+
+Project to quantizer dimension:
+  [64, 1024, 256] → [64, 1024, 256]
+
+Quantize:
+  Split groups: [64, 1024, 128] + [64, 1024, 128]
+
+  Group 0:
+    Compute distances to 320 codes
+    Find nearest: code_idx_0 [64, 1024]
+    Retrieve: quantized_0 [64, 1024, 128]
+
+  Group 1:
+    Compute distances to 320 codes
+    Find nearest: code_idx_1 [64, 1024]
+    Retrieve: quantized_1 [64, 1024, 128]
+
+  Concatenate: [64, 1024, 256]
+
+Quantized output: [64, 1024, 256] (discrete codes)
+
+STEP 6: SAMPLE NEGATIVES
+------------------------
+
+For each position in each sample, sample 100 negatives.
+
+Example for position t in sample 0:
+  Positive: quantized[0, t]  # [256]
+
+  Negatives (100 samples):
+    - quantized[0, random_t1]  # Different time in same sample
+    - quantized[1, random_t2]  # Different sample
+    - quantized[2, random_t3]
+    - ...
+    - quantized[random_b, random_t100]
+
+Total negatives per position: 100
+
+STEP 7: COMPUTE SIMILARITIES
+----------------------------
+
+For each masked position t:
+
+Context: context[b, t]  # [256]
+Positive: quantized[b, t]  # [256]
+Negatives: [neg_1, neg_2, ..., neg_100]  # 100 × [256]
+
+Compute cosine similarities:
+  sim_pos = cosine_sim(context, positive)
+  sim_neg_1 = cosine_sim(context, neg_1)
+  sim_neg_2 = cosine_sim(context, neg_2)
+  ...
+  sim_neg_100 = cosine_sim(context, neg_100)
+
+Create logits (scaled by temperature):
+  logits = [sim_pos, sim_neg_1, ..., sim_neg_100] / temperature
+  # Shape: [101] (1 positive + 100 negatives)
+
+STEP 8: CONTRASTIVE LOSS (InfoNCE)
+----------------------------------
+
+Apply softmax:
+  probs = softmax(logits)  # [101]
+
+Target: First position (index 0 = positive)
+Loss: Cross-entropy
+  loss = -log(probs[0])
+
+Intuition:
+  - probs[0] should be high (model confident in positive)
+  - probs[1:] should be low (model rejects negatives)
+
+Average over all masked positions:
+  total_loss = mean(losses over masked positions)
+
+STEP 9: DIVERSITY LOSS
+---------------------
+
+Compute code usage across batch:
+  all_code_indices = concat([code_idx_0, code_idx_1])  # [64*1024*2]
+  code_counts = histogram(all_code_indices, bins=640)
+
+Compute perplexity:
+  probs = code_counts / sum(code_counts)
+  entropy = -sum(probs * log(probs + 1e-7))
+  perplexity = exp(entropy)
+
+Diversity loss:
+  diversity_loss = -log(perplexity)
+
+STEP 10: TOTAL LOSS
+------------------
+
+total_loss = contrastive_loss + diversity_lambda * diversity_loss
+           = contrastive_loss + 0.1 * diversity_loss
+
+STEP 11: BACKPROPAGATION
+-----------------------
+
+total_loss.backward()
+
+Gradients flow through:
+  1. Contrastive head
+  2. U-Net backbone (15 mLSTM layers)
+  3. Encoder
+  4. VQ codebooks
+
+Gradient clipping: max_norm = 1.0
+
+optimizer.step()
+
+================================================================================
+6. COMPONENT-BY-COMPONENT CODE ANALYSIS
+================================================================================
+
+6.1 ENCODER: ConvDownEncoderContrastive
+---------------------------------------
+
+FILE: tasks/encoders.py (lines ~600-800)
+
+```python
+class ConvDownEncoderContrastive(nn.Module):
+    """
+    Convolutional encoder with Wav2Vec 2.0 style span masking.
+    """
+
+    def __init__(
+        self,
+        d_data: int = 3,
+        d_model: int = 256,
+        dim: int = 256,
+        kernel_size: int = 3,
+        stride: int = 2,
+        n_layers: int = 2,
+        mask_prob: float = 0.65,      # Probability of masking a span
+        mask_length: int = 10,        # Length of each masked span
+        mask_channel_prob: float = 0.0,
+        bert_style: bool = False,
+        **kwargs
+    ):
+        super().__init__()
+
+        self.mask_prob = mask_prob
+        self.mask_length = mask_length
+
+        # Conv layers (same as BidirAutoregEncoder)
+        self.conv_layers = nn.ModuleList([...])
+
+        # Learnable mask embedding (used to replace masked features)
+        self.mask_emb = nn.Parameter(torch.randn(1, 1, dim))
+
+    def forward(self, x, mask=None):
+        """
+        Args:
+            x: [B, T, C] e.g., [64, 4096, 3]
+            mask: Optional pre-computed mask
+
+        Returns:
+            features: [B, T//4, D] e.g., [64, 1024, 256]
+            mask: [B, T//4] boolean mask
+        """
+        # Conv subsample
+        x = x.transpose(1, 2)  # [B, C, T]
+        for conv in self.conv_layers:
+            x = conv(x)  # [64, 256, 1024]
+        x = x.transpose(1, 2)  # [64, 1024, 256]
+
+        # Create span mask if not provided
+        if mask is None:
+            mask = self._create_span_mask(x.shape[0], x.shape[1])
+
+        # Apply mask
+        x_masked = x.clone()
+        x_masked[mask] = self.mask_emb
+
+        return x_masked, mask
+
+    def _create_span_mask(self, batch_size, seq_len):
+        """
+        Create Wav2Vec 2.0 style span mask.
+
+        Args:
+            batch_size: B
+            seq_len: T
+
+        Returns:
+            mask: [B, T] boolean
+        """
+        mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
+
+        for b in range(batch_size):
+            # Determine number of spans to mask
+            num_masked = int(self.mask_prob * seq_len / self.mask_length)
+
+            # Sample span start positions
+            span_starts = torch.randperm(seq_len - self.mask_length)[:num_masked]
+
+            # Mask each span
+            for start in span_starts:
+                mask[b, start:start + self.mask_length] = True
+
+        return mask
+```
+
+Key differences from Config 1 encoder:
+  - SPAN masking instead of random
+  - Learnable mask embedding
+  - Returns both features and mask
+
+
+6.2 MODEL: ContrastiveWrapper
+-----------------------------
+
+FILE: models/contrastive_wrapper.py (hypothetical location)
+
+```python
+class ContrastiveWrapper(nn.Module):
+    """
+    Wraps a backbone (U-Net) with contrastive learning head and VQ.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+
+        # Backbone (U-Net)
+        self.backbone = xLSTMUNetBackbone(config)
+
+        # Projection to contrastive space
+        self.project_context = nn.Linear(
+            config.d_model,              # 128
+            config.final_projection_dim  # 256
+        )
+
+        # Vector quantizer
+        self.quantizer = VectorQuantizer(
+            num_groups=config.quantizer_args.num_codevector_groups,  # 2
+            num_codes=config.quantizer_args.num_codevectors_per_group,  # 320
+            dim=config.codevector_dim,  # 256
+            ...
+        )
+
+        # Contrastive head parameters
+        self.num_negatives = config.num_negatives  # 100
+        self.temperature = config.temperature      # 0.1
+
+    def forward(self, x_masked, x_unmasked, mask):
+        """
+        Args:
+            x_masked: Masked features [B, T, D]
+            x_unmasked: Unmasked features [B, T, D]
+            mask: Boolean mask [B, T]
+
+        Returns:
+            loss: Contrastive + diversity loss
+            metrics: Dictionary of metrics
+        """
+        # 1. Get context from masked input
+        context = self.backbone(x_masked)  # [B, T, 128]
+        context = self.project_context(context)  # [B, T, 256]
+
+        # 2. Quantize unmasked input (targets)
+        quantized, vq_loss, perplexity = self.quantizer(x_unmasked)
+        # quantized: [B, T, 256]
+
+        # 3. Sample negatives
+        negatives = self._sample_negatives(quantized, self.num_negatives)
+        # negatives: [B, T, num_neg, 256]
+
+        # 4. Compute contrastive loss
+        contrastive_loss = self._compute_infonce(
+            context, quantized, negatives, mask
+        )
+
+        # 5. Total loss
+        total_loss = contrastive_loss + self.diversity_lambda * vq_loss
+
+        return total_loss, {
+            'contrastive_loss': contrastive_loss,
+            'diversity_loss': vq_loss,
+            'perplexity': perplexity,
+        }
+
+    def _sample_negatives(self, quantized, num_neg):
+        """
+        Sample negative examples for each position.
+        """
+        B, T, D = quantized.shape
+
+        # Flatten to [B*T, D]
+        quantized_flat = quantized.view(-1, D)
+
+        # For each position, sample num_neg random others
+        negatives = []
+        for _ in range(num_neg):
+            # Random indices
+            indices = torch.randint(0, B*T, (B*T,))
+            neg = quantized_flat[indices]  # [B*T, D]
+            negatives.append(neg)
+
+        # Stack: [B*T, num_neg, D]
+        negatives = torch.stack(negatives, dim=1)
+
+        # Reshape: [B, T, num_neg, D]
+        negatives = negatives.view(B, T, num_neg, D)
+
+        return negatives
+
+    def _compute_infonce(self, context, targets, negatives, mask):
+        """
+        Compute InfoNCE contrastive loss.
+        """
+        # context: [B, T, D]
+        # targets: [B, T, D]
+        # negatives: [B, T, num_neg, D]
+
+        # Compute positive similarity
+        sim_pos = F.cosine_similarity(context, targets, dim=-1)  # [B, T]
+
+        # Compute negative similarities
+        # Expand context: [B, T, 1, D]
+        context_exp = context.unsqueeze(2)
+        # Compute: [B, T, num_neg]
+        sim_neg = F.cosine_similarity(context_exp, negatives, dim=-1)
+
+        # Concatenate: [B, T, 1+num_neg]
+        logits = torch.cat([sim_pos.unsqueeze(-1), sim_neg], dim=-1)
+
+        # Scale by temperature
+        logits = logits / self.temperature
+
+        # Target: index 0 (positive)
+        targets_idx = torch.zeros(logits.shape[0], logits.shape[1], dtype=torch.long)
+
+        # Cross-entropy loss
+        loss = F.cross_entropy(
+            logits.view(-1, logits.shape[-1]),
+            targets_idx.view(-1),
+            reduction='none'
+        )
+
+        # Apply mask (only compute loss on masked positions)
+        if mask is not None:
+            loss = loss * mask.view(-1).float()
+            loss = loss.sum() / mask.sum()
+        else:
+            loss = loss.mean()
+
+        return loss
+```
+
+
+6.3 VECTOR QUANTIZER
+-------------------
+
+FILE: models/vector_quantizer.py (hypothetical)
+
+```python
+class VectorQuantizer(nn.Module):
+    """
+    Product vector quantizer with Gumbel-Softmax.
+    """
+
+    def __init__(
+        self,
+        num_groups: int = 2,
+        num_codes: int = 320,
+        dim: int = 256,
+        ...
+    ):
+        super().__init__()
+
+        self.num_groups = num_groups
+        self.num_codes = num_codes
+        self.dim_per_group = dim // num_groups  # 128
+
+        # Codebooks (learnable)
+        self.codebooks = nn.ParameterList([
+            nn.Parameter(torch.randn(num_codes, self.dim_per_group))
+            for _ in range(num_groups)
+        ])
+
+        # Initialize codebooks with uniform distribution
+        for codebook in self.codebooks:
+            nn.init.uniform_(codebook, -1/num_codes, 1/num_codes)
+
+    def forward(self, x, temperature=1.0):
+        """
+        Args:
+            x: [B, T, D] features to quantize
+            temperature: Gumbel-Softmax temperature
+
+        Returns:
+            quantized: [B, T, D] quantized features
+            vq_loss: Diversity loss
+            perplexity: Codebook perplexity
+        """
+        B, T, D = x.shape
+
+        # Split into groups
+        x_groups = x.chunk(self.num_groups, dim=-1)  # List of [B, T, D//G]
+
+        quantized_groups = []
+        code_probs = []
+
+        for g, (x_g, codebook) in enumerate(zip(x_groups, self.codebooks)):
+            # x_g: [B, T, 128]
+            # codebook: [320, 128]
+
+            # Compute distances
+            # Expand: x_g [B, T, 1, 128], codebook [1, 1, 320, 128]
+            distances = torch.sum(
+                (x_g.unsqueeze(2) - codebook.unsqueeze(0).unsqueeze(0)) ** 2,
+                dim=-1
+            )  # [B, T, 320]
+
+            # Convert to logits (negative distance)
+            logits = -distances
+
+            # Gumbel-Softmax
+            if self.training:
+                # Add Gumbel noise
+                gumbel = -torch.log(-torch.log(torch.rand_like(logits) + 1e-10) + 1e-10)
+                probs = F.softmax((logits + gumbel) / temperature, dim=-1)
+            else:
+                # Hard selection (one-hot)
+                indices = logits.argmax(dim=-1)
+                probs = F.one_hot(indices, num_classes=self.num_codes).float()
+
+            # Weighted sum of codebook vectors
+            quantized_g = torch.matmul(probs, codebook)  # [B, T, 128]
+
+            quantized_groups.append(quantized_g)
+            code_probs.append(probs)
+
+        # Concatenate groups
+        quantized = torch.cat(quantized_groups, dim=-1)  # [B, T, 256]
+
+        # Compute diversity loss (encourage uniform codebook usage)
+        all_probs = torch.cat([p.view(-1, self.num_codes) for p in code_probs], dim=0)
+        avg_probs = all_probs.mean(dim=0)  # [num_codes]
+        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+
+        # Diversity loss: maximize perplexity (log perplexity ≈ entropy)
+        diversity_loss = -torch.log(perplexity + 1e-10)
+
+        return quantized, diversity_loss, perplexity
+```
+
+================================================================================
+7. SPAN MASKING STRATEGY
+================================================================================
+
+SPAN MASKING vs RANDOM MASKING:
+-------------------------------
+
+Random masking (Config 1):
+  [1 0 1 1 0 0 1 0 1 1 0 1 ...]
+   Each position independently masked with prob 0.75
+
+Span masking (Config 2):
+  [0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 ...]
+   Consecutive spans of length 10 are masked
+
+WHY SPAN MASKING?
+-----------------
+
+Benefits:
+  1. More challenging task (can't just interpolate neighbors)
+  2. Forces learning longer-range dependencies
+  3. More realistic (seismic signals are continuous)
+  4. Proven effective in Wav2Vec 2.0 (speech)
+
+Example:
+  Random mask: [P-wave] [S-wave] [?] [coda] [?] [noise]
+    Easy: Interpolate single missing samples
+
+  Span mask: [P-wave] [????????????] [coda]
+    Hard: Must understand wave propagation to fill 10-sample gap
+
+IMPLEMENTATION:
+--------------
+
+```python
+def create_span_mask(seq_len=1024, mask_prob=0.65, mask_length=10):
+    """
+    Create span mask.
+
+    Args:
+        seq_len: Sequence length after subsampling (1024)
+        mask_prob: Fraction of sequence to mask (0.65)
+        mask_length: Length of each span (10)
+
+    Returns:
+        mask: [seq_len] boolean
+    """
+    mask = torch.zeros(seq_len, dtype=torch.bool)
+
+    # Calculate number of spans to mask
+    total_masked = int(mask_prob * seq_len)  # 0.65 × 1024 ≈ 666
+    num_spans = total_masked // mask_length  # 666 // 10 ≈ 66 spans
+
+    # Sample span start positions (without replacement)
+    max_start = seq_len - mask_length  # 1024 - 10 = 1014
+    span_starts = torch.randperm(max_start)[:num_spans]
+
+    # Mask each span
+    for start in span_starts:
+        mask[start:start + mask_length] = True
+
+    return mask
+```
+
+STATISTICS:
+----------
+
+With mask_prob=0.65, mask_length=10, seq_len=1024:
+  - Number of spans: ~66
+  - Total masked timesteps: 66 × 10 = 660
+  - Actual mask ratio: 660 / 1024 ≈ 64.5%
+  - Unmasked: ~364 timesteps (35.5%)
+
+Visualized:
+```
+Timesteps:  0                           500                          1024
+            |                            |                             |
+Mask:       ░░░░░░░░░░██████████░░░░░░░░██████████░░░░░░░░██████████░░
+            ↑         ↑         ↑        ↑         ↑       ↑
+            Visible   Span 1    Visible  Span 2    Visible Span 3...
+
+            ░ = Visible (35.5%)
+            █ = Masked span (64.5%)
+```
+
+================================================================================
+8. TRAINING PROCESS STEP-BY-STEP
+================================================================================
+
+TRAINING LOOP:
+-------------
+
+```python
+# Initialization
+model = ContrastiveWrapper(config)
+
+trainer = pl.Trainer(
+    devices=4,
+    precision='bf16-mixed',
+    max_epochs=50,
+    ...
+)
+
+# Training
+for epoch in range(50):
+    for batch_idx, batch in enumerate(train_loader):
+        # Batch from dataset (8 datasets combined)
+        x, metadata = batch  # x: [64, 4096, 3]
+
+        # === FORWARD PASS ===
+
+        # 1. Encoder with masking
+        x_masked, mask = encoder(x)  # [64, 1024, 256], [64, 1024]
+
+        # 2. Encoder without masking (for targets)
+        x_unmasked, _ = encoder(x, mask=None)  # [64, 1024, 256]
+
+        # 3. Backbone (U-Net)
+        context = model.backbone(x_masked)  # [64, 1024, 128]
+
+        # 4. Project to contrastive space
+        context = model.project_context(context)  # [64, 1024, 256]
+
+        # 5. Quantize unmasked (targets)
+        quantized, diversity_loss, perplexity = model.quantizer(x_unmasked)
+        # quantized: [64, 1024, 256]
+
+        # 6. Sample 100 negatives per position
+        negatives = model.sample_negatives(quantized, num_neg=100)
+        # negatives: [64, 1024, 100, 256]
+
+        # 7. Compute InfoNCE loss
+        contrastive_loss = model.compute_infonce(
+            context, quantized, negatives, mask
+        )
+
+        # 8. Total loss
+        total_loss = contrastive_loss + 0.1 * diversity_loss
+
+        # === BACKWARD PASS ===
+
+        total_loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        # Optimizer step
+        optimizer.step()
+        optimizer.zero_grad()
+
+        # Scheduler step
+        scheduler.step()
+
+        # Update Gumbel temperature (anneal)
+        current_step = epoch * len(train_loader) + batch_idx
+        gumbel_temp = anneal_temperature(
+            current_step,
+            max_temp=2.0,
+            min_temp=0.5,
+            total_steps=50 * len(train_loader)
+        )
+
+        # Logging
+        if batch_idx % 100 == 0:
+            log_metrics({
+                'train/loss': total_loss.item(),
+                'train/contrastive': contrastive_loss.item(),
+                'train/diversity': diversity_loss.item(),
+                'train/perplexity': perplexity.item(),
+                'train/gumbel_temp': gumbel_temp,
+            })
+
+    # Validation (4x per epoch)
+    if (epoch % 0.25) == 0:
+        for batch in val_loader:
+            with torch.no_grad():
+                # Same forward pass
+                ...
+                val_loss = contrastive_loss + 0.1 * diversity_loss
+
+                log_metrics({
+                    'val/loss': val_loss.item(),
+                    'val/perplexity': perplexity.item(),
+                })
+
+    # Checkpointing
+    if val_loss < best_val_loss:
+        save_checkpoint(model, f'best_contrastive_epoch{epoch}.ckpt')
+```
+
+TYPICAL TRAINING METRICS:
+-------------------------
+
+Epoch 0:
+  - train/loss: ~5-10 (high, learning to distinguish)
+  - train/contrastive: ~4.6 (log(100), random guessing from 101 options)
+  - train/perplexity: ~10-50 (low codebook usage)
+
+Epoch 10:
+  - train/loss: ~2-4
+  - train/contrastive: ~2-3
+  - train/perplexity: ~100-200 (improving usage)
+
+Epoch 30:
+  - train/loss: ~1-2
+  - train/contrastive: ~0.5-1.5
+  - train/perplexity: ~300-500 (good usage, approaching 640 max)
+
+Epoch 50:
+  - train/loss: ~0.5-1.5
+  - train/contrastive: ~0.3-1.0
+  - train/perplexity: ~400-600 (near-uniform codebook usage)
+
+Best model typically around epoch 40-45.
+
+================================================================================
+9. InfoNCE LOSS EXPLAINED
+================================================================================
+
+WHAT IS InfoNCE?
+----------------
+
+InfoNCE = Info Noise-Contrastive Estimation
+
+A loss function for contrastive learning that maximizes mutual information
+between positive pairs while minimizing it for negative pairs.
+
+MATHEMATICAL FORMULATION:
+------------------------
+
+For a single position t:
+  - Context: c_t ∈ ℝ^D
+  - Positive target: z_t^+ ∈ ℝ^D
+  - Negative targets: {z_t^- }_{i=1}^K ∈ ℝ^D (K negatives)
+
+Similarity function (cosine similarity):
+  sim(c, z) = (c · z) / (||c|| ||z||)
+
+Scaled similarities:
+  s^+ = sim(c_t, z_t^+) / τ
+  s_i^- = sim(c_t, z_t^-_i) / τ
+
+  where τ is temperature (0.1 in our config)
+
+InfoNCE loss:
+  L = -log( exp(s^+) / (exp(s^+) + Σ_i exp(s_i^-)) )
+
+Simplifies to:
+  L = -s^+ + log(exp(s^+) + Σ_i exp(s_i^-))
+
+Or equivalently (cross-entropy form):
+  logits = [s^+, s_1^-, s_2^-, ..., s_K^-]
+  L = CrossEntropy(logits, target=0)
+
+WHY THIS WORKS:
+--------------
+
+Minimizing L is equivalent to:
+  - Maximizing exp(s^+): Make positive similarity high
+  - Minimizing Σ_i exp(s_i^-): Make negative similarities low
+
+The loss forces:
+  - c_t and z_t^+ to be close in embedding space
+  - c_t and z_t^-_i to be far apart
+
+TEMPERATURE τ:
+-------------
+
+Temperature controls the sharpness of the distribution.
+
+Low temperature (τ = 0.1):
+  - Sharp distribution
+  - Model must be very confident
+  - Harder task (larger gradients for mistakes)
+
+High temperature (τ = 1.0):
+  - Smooth distribution
+  - Model can be less confident
+  - Easier task (smaller gradients)
+
+Example with τ = 0.1:
+  sim^+ = 0.8, sim^-_avg = 0.3
+
+  logits = [0.8/0.1, 0.3/0.1, ...] = [8.0, 3.0, ...]
+  probs = softmax([8.0, 3.0, ...]) = [0.993, 0.001, ...]
+
+  Model is forced to be very confident (99.3%) in positive.
+
+GRADIENT FLOW:
+-------------
+
+Loss gradient w.r.t. context:
+  ∂L/∂c_t ∝ (z_t^+ - Σ_i p_i z_i^-)
+
+  where p_i = softmax(logits)[i]
+
+Interpretation:
+  - Pull c_t towards positive z_t^+
+  - Push c_t away from negatives, weighted by their probability p_i
+  - Hard negatives (high similarity) get larger push
+
+This creates a very effective training signal!
+
+================================================================================
+10. CODE IMPLEMENTATION MAPPING
+================================================================================
+
+CONFIG PARAMETER → CODE:
+-----------------------
+
+experiment_name: WAV2VEC_xlstm_unet_SEISBENCH
+  → simple_train.py:863 (WandB)
+
+model.model_backbone: 'xlstm_unet'
+  → models/contrastive_wrapper.py:50
+  → Instantiates xLSTMUNetBackbone
+
+model.use_unet: True
+  → models/xlstm_unet.py:450
+  → Enables U-Net mode (vs sequential)
+
+model.d_model: 128
+  → U-Net base dimension
+
+model.n_layers: 3
+  → 3 layers per stage (15 total)
+
+model.final_projection_dim: 256
+  → Contrastive head projection dimension
+
+model.num_negatives: 100
+  → Sample 100 negatives per position
+
+model.temperature: 0.1
+  → InfoNCE temperature scaling
+
+model.quantize: true
+  → Enable vector quantization
+
+model.quantizer_args.num_codevector_groups: 2
+  → 2 codebook groups
+
+model.quantizer_args.num_codevectors_per_group: 320
+  → 320 codes per group = 640 total
+
+train.diversity_lambda: 0.1
+  → Weight for diversity loss
+
+train.gumbel_min_temperature: 0.5
+train.gumbel_max_temperature: 2.0
+  → Gumbel-Softmax temperature annealing range
+
+encoder._name_: conv-down-encoder-contrastive
+  → tasks/encoders.py:650
+  → ConvDownEncoderContrastive
+
+encoder.mask_prob: 0.65
+  → Mask 65% of spans
+
+encoder.mask_length: 10
+  → Each span is 10 timesteps
+
+dataset.dataset_name: [ETHZ, GEOFON, STEAD, ...]
+  → 8 datasets combined
+  → dataloaders/seisbench_auto_reg.py
+
+dataset.wav2vec: true
+  → Wav2Vec mode (no autoregressive targets)
+
+decoder._name_: dummy
+  → No decoder (contrastive head replaces it)
+
+trainer.devices: 4
+  → 4 GPUs (vs 2 in Config 1)
+
+trainer.val_check_interval: 0.25
+  → Validate 4x per epoch
+
+optimizer.lr: 0.001
+  → Half of Config 1's LR
+
+scheduler.warmup_fraction: 0.2
+  → 20% warmup (vs 10%)
+
+================================================================================
+END OF PART 3: CONFIG 2 DEEP DIVE
+Next: Part 4 - Contrastive Learning Explained
+================================================================================

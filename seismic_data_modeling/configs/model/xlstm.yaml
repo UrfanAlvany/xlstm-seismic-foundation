@@ -1,0 +1,27 @@
+_name_: xlstm
+
+# Core architecture parameters
+d_model: 64
+n_layers: 4
+max_seq_len: 4096
+
+# Architecture configuration
+block_type: "slstm"           # "slstm", "mlstm", "mixed"
+bidirectional: true          # Will be overridden by experiment config
+dropout: 0.0
+
+# sLSTM specific configurations
+slstm_num_heads: 4
+slstm_conv1d_kernel_size: 4
+slstm_bias_init: "powerlaw_blockdependent"
+slstm_backend: "cuda"
+
+# mLSTM specific configurations  
+mlstm_num_heads: 4
+
+# FeedForward specific configurations
+ff_proj_factor: 1.3
+ff_act_fn: "gelu"
+
+# Memory optimization
+gradient_checkpointing: false  # Will be overridden by experiment config

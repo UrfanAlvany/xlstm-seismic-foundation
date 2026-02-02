@@ -1,0 +1,109 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: contrastive
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: contrastive_wrapper
+
+experiment_name: WAV2VEC_xlstm_unet_ETHZ_quickcheck
+
+model:
+  model_backbone: 'xlstm_unet'
+  d_model: 96
+  n_layers: 3
+  expand: 2
+  pool: [4, 4]
+  bidirectional: true
+  dropout: 0.10
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 1.6
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+  enable_tflakernels: true
+  chunk_size: 128
+  chunkwise_kernel: 'chunkwise--triton_xl_chunk'
+  sequence_kernel: 'native_sequence__triton'
+  step_kernel: 'triton'
+  autocast_kernel_dtype: 'bfloat16'
+  final_projection_dim: 256
+  num_negatives: 100
+  temperature: 0.1
+  quantize: true
+  use_mem_eff_path: true
+  quantizer_args:
+    num_codevector_groups: 2
+    num_codevectors_per_group: 320
+    conv_dim: [256]
+    codevector_dim: 256
+    scale_logits_in_quantization: true
+
+train:
+  monitor: val/loss
+  mode: min
+  diversity_lambda: 0.1
+  clip_grad_norm: 1.0
+  # Gumbel temperature schedule for quantizer (seisLM-style)
+  gumbel_min_temperature: 0.5
+  gumbel_max_temperature: 2.0
+
+optimizer:
+  lr: 0.001
+
+dataset:
+  dataset_name:
+    - ETHZ
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  norm_type: std
+  wav2vec: true
+
+encoder:
+  _name_: conv-down-encoder-contrastive
+  kernel_size: 3
+  n_layers: 2
+  dim: 256
+  stride: 2
+  # Masking probability as used in many SeisLM/Wav2Vec2-style configs
+  # num_spans ≈ mask_prob * L / mask_length, coverage ≈ mask_prob
+  mask_prob: 0.65
+  mask_length: 10
+  mask_channel_prob: 0.0
+  mask_channel_length: 1
+
+decoder:
+  _name_: dummy
+
+loader:
+  batch_size: 64
+  drop_last: true
+  persistent_workers: true
+  num_workers: 12
+  prefetch_factor: 4
+  pin_memory: true
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 880
+  num_training_steps: 8800
+
+trainer:
+  max_steps: 8800
+  max_epochs: 100
+  precision: bf16-mixed
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.0
+  log_every_n_steps: 100
+  val_check_interval: 0.25
+  enable_model_summary: false
+  enable_progress_bar: true
+
+# Manual gradient clipping hook reads from these keys
+optim:
+  clip_grad_norm: 1.0

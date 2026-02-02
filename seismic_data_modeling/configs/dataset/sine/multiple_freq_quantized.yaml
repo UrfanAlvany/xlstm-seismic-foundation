@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - sine/default_sine
+
+dataset:
+  data_dir: dataloaders/data/basic_waveforms/sine_10_2000_hz_quantized.npy
+  quantize: True
+  bits: 8

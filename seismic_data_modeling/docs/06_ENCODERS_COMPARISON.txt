@@ -1,0 +1,350 @@
+================================================================================
+COMPREHENSIVE DOCUMENTATION: xLSTM SEISMIC MODELS
+PART 6: ENCODERS COMPARISON AND ANALYSIS
+================================================================================
+
+Purpose: Compare all encoder types used in both configurations
+FILE: tasks/encoders.py
+
+================================================================================
+ENCODER OVERVIEW
+================================================================================
+
+Three main encoders discussed:
+1. LinearEncoder - Config 1 (autoregressive) NOT USED actually
+2. BidirAutoregEncoder - Config 1 (autoregressive) ACTUALLY USED
+3. ConvDownEncoderContrastive - Config 2 (contrastive)
+
+================================================================================
+1. LINEAR ENCODER
+================================================================================
+
+CLASS: LinearEncoder
+USAGE: Simple baseline (mentioned in configs but not primary)
+
+Code:
+```python
+class LinearEncoder(nn.Module):
+    def __init__(self, d_data=3, d_model=80):
+        self.linear = nn.Linear(d_data, d_model)
+    
+    def forward(self, x):
+        return self.linear(x)  # [B, T, 3] → [B, T, 80]
+```
+
+Properties:
+  - No subsampling (maintains sequence length)
+  - No masking
+  - Simplest possible encoder
+  - Parameters: 3 × 80 = 240
+
+When to use:
+  - Baseline experiments
+  - When sequence length must be preserved
+  - Quick prototyping
+
+Limitations:
+  - No compression (processes full 4096 sequence)
+  - Expensive for deep models
+  - No learned feature extraction
+
+================================================================================
+2. BIDIR-AUTOREG ENCODER  
+================================================================================
+
+CLASS: BidirAutoregEncoder
+USAGE: Config 1 (pure_mlstm_sequential_12m_foundation.yaml)
+
+Code structure:
+```python
+class BidirAutoregEncoder(nn.Module):
+    def __init__(self, d_data=3, d_model=176, conv_dim=256, n_layers=2, stride=2):
+        # Two conv layers with stride=2 each → 4x subsampling
+        self.conv_layers = nn.ModuleList([
+            nn.Conv1d(d_data if i==0 else conv_dim, conv_dim,
+                      kernel_size=3, stride=2, padding=1)
+            for i in range(n_layers)
+        ])
+        self.proj = nn.Linear(conv_dim, d_model)
+    
+    def forward(self, x):
+        # [B, 4096, 3] → transpose → [B, 3, 4096]
+        x = x.transpose(1, 2)
+        
+        # Conv1: [B, 3, 4096] → [B, 256, 2048]
+        # Conv2: [B, 256, 2048] → [B, 256, 1024]
+        for conv in self.conv_layers:
+            x = F.gelu(conv(x))
+        
+        x = x.transpose(1, 2)  # [B, 1024, 256]
+        x = self.proj(x)       # [B, 1024, 176]
+        
+        return x, x  # Return twice for compatibility
+```
+
+Properties:
+  - Subsampling: 4x (4096 → 1024)
+  - Method: Strided convolution
+  - Activation: GELU
+  - Intermediate dim: 256
+  - Output dim: 176
+  - Parameters: ~50K
+
+Benefits:
+  - Reduces sequence length (4x faster processing)
+  - Learned feature extraction (conv filters)
+  - Smooth transitions (overlapping receptive fields)
+
+Limitations:
+  - No masking built-in (handled by dataset)
+  - Fixed subsampling rate
+
+Why 4x subsampling?
+  - Balance: Enough compression for efficiency
+  - Not too much: Preserve temporal resolution
+  - Standard: Matches many speech/audio models
+
+================================================================================
+3. CONV-DOWN ENCODER CONTRASTIVE
+================================================================================
+
+CLASS: ConvDownEncoderContrastive
+USAGE: Config 2 (xlstm_unet_seisbench.yaml)
+
+Code structure:
+```python
+class ConvDownEncoderContrastive(nn.Module):
+    def __init__(self, d_data=3, dim=256, n_layers=2, stride=2,
+                 mask_prob=0.65, mask_length=10, bert_style=False):
+        # Same conv structure as BidirAutoregEncoder
+        self.conv_layers = nn.ModuleList([...])
+        
+        # Learnable mask embedding
+        self.mask_emb = nn.Parameter(torch.randn(1, 1, dim))
+        
+        self.mask_prob = mask_prob
+        self.mask_length = mask_length
+    
+    def forward(self, x, mask=None):
+        # Conv subsample (same as BidirAutoregEncoder)
+        for conv in self.conv_layers:
+            x = F.gelu(conv(x))  # [B, 256, 1024]
+        
+        x = x.transpose(1, 2)  # [B, 1024, 256]
+        
+        # Create span mask if not provided
+        if mask is None:
+            mask = self._create_span_mask(x.shape[:2])
+        
+        # Apply mask: replace masked positions with learnable embedding
+        x_masked = x.clone()
+        x_masked[mask] = self.mask_emb
+        
+        return x_masked, mask
+    
+    def _create_span_mask(self, shape):
+        B, T = shape
+        mask = torch.zeros(B, T, dtype=torch.bool)
+        
+        for b in range(B):
+            # Sample span starts
+            num_spans = int(self.mask_prob * T / self.mask_length)
+            starts = torch.randperm(T - self.mask_length)[:num_spans]
+            
+            # Mask spans
+            for start in starts:
+                mask[b, start:start+self.mask_length] = True
+        
+        return mask
+```
+
+Properties:
+  - Subsampling: 4x (same as BidirAutoregEncoder)
+  - Masking: Span-based (Wav2Vec 2.0 style)
+  - Mask embedding: Learned (not zeros)
+  - mask_prob: 0.65 (65% masked)
+  - mask_length: 10 (10 consecutive timesteps)
+  - Output dim: 256
+  - Parameters: ~50K + mask_emb
+
+Key differences from BidirAutoregEncoder:
+  ✓ Built-in span masking
+  ✓ Learnable mask embedding
+  ✓ Returns mask (for loss computation)
+  ✓ Higher output dim (256 vs 176)
+
+Why span masking?
+  - Harder task: Can't just interpolate neighbors
+  - More realistic: Seismic signals are continuous
+  - Proven effective: Wav2Vec 2.0 uses this
+
+Why learned mask embedding?
+  - Better than zeros: Model learns optimal replacement
+  - Better than random: Consistent representation
+  - Interpretable: Can visualize what "mask" means
+
+================================================================================
+SIDE-BY-SIDE COMPARISON
+================================================================================
+
+┌──────────────────────┬─────────────┬──────────────────┬───────────────────┐
+│ Feature              │ Linear      │ BidirAutoreg     │ ConvDownContrast  │
+├──────────────────────┼─────────────┼──────────────────┼───────────────────┤
+│ Used in              │ (Baseline)  │ Config 1 (AR)    │ Config 2 (Contra) │
+│ Subsampling          │ No (1x)     │ Yes (4x)         │ Yes (4x)          │
+│ Method               │ Linear only │ Strided conv     │ Strided conv      │
+│ Masking              │ No          │ No (external)    │ Yes (span-based)  │
+│ Mask embedding       │ N/A         │ N/A              │ Learned param     │
+│ Input shape          │ [B,4096,3]  │ [B,4096,3]       │ [B,4096,3]        │
+│ Output shape         │ [B,4096,80] │ [B,1024,176]     │ [B,1024,256]      │
+│ Parameters           │ 240         │ ~50K             │ ~50K + 256        │
+│ Computation          │ Very low    │ Low              │ Low               │
+│ Returns              │ x           │ (x, x)           │ (x_masked, mask)  │
+├──────────────────────┼─────────────┼──────────────────┼───────────────────┤
+│ MASKING DETAILS                                                           │
+├──────────────────────┼─────────────┼──────────────────┼───────────────────┤
+│ Mask type            │ N/A         │ Random (dataset) │ Span (encoder)    │
+│ Mask ratio           │ N/A         │ 0.75             │ 0.65              │
+│ Mask granularity     │ N/A         │ Sample-level     │ Span-level        │
+│ Mask span length     │ N/A         │ 1                │ 10                │
+├──────────────────────┼─────────────┼──────────────────┼───────────────────┤
+│ BENEFITS                                                                  │
+├──────────────────────┼─────────────┼──────────────────┼───────────────────┤
+│ Simplicity           │ ✓✓✓         │ ✓✓               │ ✓                 │
+│ Efficiency           │ ✗           │ ✓✓✓              │ ✓✓✓               │
+│ Feature extraction   │ ✗           │ ✓✓               │ ✓✓                │
+│ Masking control      │ N/A         │ ✗                │ ✓✓✓               │
+│ Flexibility          │ ✓           │ ✓✓               │ ✓✓✓               │
+└──────────────────────┴─────────────┴──────────────────┴───────────────────┘
+
+================================================================================
+CONVOLUTION DETAILS
+================================================================================
+
+Both BidirAutoregEncoder and ConvDownEncoderContrastive use same conv structure.
+
+Conv1D layer details:
+  - Kernel size: 3
+  - Stride: 2
+  - Padding: 1
+  - Activation: GELU
+
+Receptive field calculation:
+  Layer 1: RF = 3
+  Layer 2: RF = 3 + 2×(3-1) = 7
+
+  Each output timestep sees 7 input timesteps.
+  At 100 Hz, this is 70ms of context.
+
+Why GELU (not ReLU)?
+  - Smoother gradients
+  - Better for transformers/LSTMs
+  - No "dying neuron" problem
+  - Empirically better for sequence models
+
+Why stride=2 (not pooling)?
+  - Learnable downsampling (vs fixed pooling)
+  - Cleaner implementation
+  - Common in modern architectures (ResNet, etc.)
+
+================================================================================
+MASKING STRATEGIES DETAILED
+================================================================================
+
+RANDOM MASKING (Config 1, external):
+  Implementation in dataset:
+    mask = torch.rand(B, T) < 0.75
+    x_masked = x.clone()
+    x_masked[mask] = 0
+  
+  Statistics:
+    - Mask ratio: 75%
+    - Expected gaps: Very short (1-2 samples)
+    - Max gap: Unbounded (rare)
+  
+  Difficulty: Easy (can interpolate)
+
+SPAN MASKING (Config 2, built-in):
+  Implementation in encoder:
+    num_spans = int(0.65 * T / 10)
+    starts = sample(T - 10, num_spans)
+    for start in starts:
+        mask[start:start+10] = True
+    x_masked[mask] = self.mask_emb
+  
+  Statistics:
+    - Mask ratio: 65%
+    - Gap length: Exactly 10 samples (0.1s at 100Hz)
+    - Number of gaps: ~66 (for T=1024)
+  
+  Difficulty: Hard (must understand continuity)
+
+BERT-STYLE MASKING (not used, but available):
+  Implementation:
+    - 80%: Replace with [MASK] token
+    - 10%: Replace with random token
+    - 10%: Keep original
+  
+  Purpose: Prevent model from only learning [MASK] representation
+  
+  Not used because:
+    - Continuous signals (no discrete tokens)
+    - Simpler works well enough
+
+================================================================================
+WHEN TO USE WHICH ENCODER?
+================================================================================
+
+Use LinearEncoder when:
+  ✓ Baseline/debugging
+  ✓ Sequence length must be preserved
+  ✓ Minimal processing desired
+
+Use BidirAutoregEncoder when:
+  ✓ Autoregressive pretraining
+  ✓ Need 4x compression for efficiency
+  ✓ Masking handled externally (in dataset)
+  ✓ Simple and clean separation of concerns
+
+Use ConvDownEncoderContrastive when:
+  ✓ Contrastive learning
+  ✓ Wav2Vec 2.0 style pretraining
+  ✓ Span masking desired
+  ✓ Masking should be part of model
+  ✓ Learnable mask representation wanted
+
+================================================================================
+ENCODER DESIGN PRINCIPLES
+================================================================================
+
+1. SUBSAMPLING RATIO:
+   - Too low (1-2x): Still expensive, little benefit
+   - Good (4x): 4x speedup, preserves info
+   - Too high (8x+): Loss of temporal resolution
+
+   Rule of thumb: Match model depth
+     - Shallow models (<10 layers): 2-4x
+     - Deep models (20+ layers): 4-8x
+
+2. CONV KERNEL SIZE:
+   - Small (3): Local context, less smoothing
+   - Large (7-11): More context, more smoothing
+   
+   For seismic: 3 is good (70ms receptive field)
+
+3. INTERMEDIATE DIMENSION:
+   - Too small (<128): Bottleneck, information loss
+   - Good (256): Sufficient capacity
+   - Too large (>512): Overfitting, slow
+   
+   Rule of thumb: 2-4x final dimension
+
+4. MASKING:
+   - External (dataset): Cleaner separation, more flexible
+   - Internal (encoder): Consistent, reproducible
+   
+   Choose based on use case.
+
+================================================================================
+END OF PART 6: ENCODERS COMPARISON
+================================================================================

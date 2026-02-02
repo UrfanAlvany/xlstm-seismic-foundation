@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - sine/default_sine
+
+dataset:
+  data_dir: dataloaders/data/basic_waveforms/sine_200_hz_very_noisy.npy
+  sample_len: 2048
+  min_freq: 200
+  max_freq: 200
+  num_frequencies: 1
+  num_random_amplitudes: 10000
+  noise_amplitude: 0.5
+  overwrite_existing_file: False

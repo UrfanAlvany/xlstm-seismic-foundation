@@ -1,0 +1,21 @@
+experiment_name: XLSTM_fine_tune_GEOFON_10pct
+model:
+  pretrained: $REAL_PRETRAIN
+encoder:
+  pretrained: true
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: true
+  kernel_size: 3
+  dropout: 0.2
+dataset:
+  _name_: ethz-phase-pick
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: GEOFON
+  norm_type: std
+  training_fraction: 0.1
+task:
+  _name_: phase_pick
+  loss: phase-pick

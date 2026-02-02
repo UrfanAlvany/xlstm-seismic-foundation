@@ -1,0 +1,79 @@
+# @package _global_
+# CRITICAL FIX: Use bidir-autoreg-encoder to match pretraining!
+# The masked autoencoding pretraining used bidir-autoreg-encoder
+# Strategy: Match successful GEOFON fine-tuning approach
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_finetune_foreshock_FIXED_ENCODER
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm
+  bidirectional: true
+  gradient_checkpointing: true
+  d_model: 176  # Match pretrained checkpoint
+  use_unet: false  # Pretraining had no U-Net
+  load_decoder: false
+
+# CRITICAL: Must use bidir-autoreg-encoder to match pretrained checkpoint!
+encoder:
+  _name_: bidir-autoreg-encoder  # THIS WAS MISSING!
+  pretrained: true
+  freeze: true  # Start frozen, unfreeze later
+
+dataset:
+  num_classes: 9
+  batch_size: 32  # Smaller for RTX4090 (64 caused OOM)
+  num_workers: 8
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 176  # Match encoder output
+
+train:
+  monitor: val/loss
+  mode: min
+  unfreeze_at_epoch: 5  # Match successful GEOFON approach
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+optimizer:
+  lr: 2e-4           # Match successful GEOFON fine-tuning
+  weight_decay: 0.05 # Match successful GEOFON fine-tuning
+  betas: [0.9, 0.95]
+  eps: 1e-08
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  warmup_fraction: 0.1
+  num_training_steps: null
+  num_warmup_steps: null
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 50
+  gradient_clip_val: 0.0
+  val_check_interval: 0.25
+  precision: bf16-mixed
+  accumulate_grad_batches: 4
+
+optim:
+  clip_grad_norm: 1.0

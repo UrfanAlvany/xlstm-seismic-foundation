@@ -1,0 +1,5 @@
+_name_: sine
+# data_dir needs to be a specific .npy file. If the file does not exist, it will be generated
+data_dir: dataloaders/data/basic_waveforms/sine_waveform_3.npy
+sample_len: 2048
+val_split: 0.1

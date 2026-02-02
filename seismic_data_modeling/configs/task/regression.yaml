@@ -1,0 +1,3 @@
+_name_: regression
+loss: mse
+metrics: mse

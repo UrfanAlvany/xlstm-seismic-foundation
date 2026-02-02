@@ -1,0 +1,57 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: identity
+
+experiment_name: pure_decoder
+
+
+model:
+  d_model: 64
+
+train:
+  monitor: val/loss
+  mode: min
+  #seq_warmup: True
+  #final_sample_len: 4096
+  #final_batch_size: 2
+  #min_seq_len: 512
+  #num_epochs_warmup: 1
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+
+encoder:
+  _name_: linear
+
+decoder:
+  _name_: phase-pick
+  convolutional: True
+  kernel_size: 129
+
+loader:
+  batch_size: 128
+  drop_last: True
+
+optimizer:
+  lr: 0.002
+  weight_decay: 0
+# the ETHZ train dataset has 22626 traces
+# with batch size 128 and drop last true that is 176 batches per epoch
+
+scheduler:
+  num_warmup_steps: 352
+  num_training_steps: 3520
+
+trainer:
+  max_steps: 3520
+  max_epochs: 20
+  gradient_clip_val: 1.0

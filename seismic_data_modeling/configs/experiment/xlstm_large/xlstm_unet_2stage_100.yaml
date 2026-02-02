@@ -1,0 +1,104 @@
+# @package _global_
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: regression
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+  - _self_
+
+experiment_name: xlstm_unet_2stage_100m_foundation_tfla_siging
+
+model:
+  _name_: xlstm-unet
+  # U-Net backbone (2 stages) at long context
+  block_type: mlstm
+  bidirectional: true
+  d_model: 384
+  n_layers: 2
+  expand: 2
+  pool: [4, 4]
+  dropout: 0.10
+
+  # mLSTM params
+  mlstm_num_heads: 4
+  # qkv/blocksize are honored in your xLSTMUNet implementation
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+
+  # TFLA kernels (siging variant) with gate bias override for stability
+  enable_tflakernels: true
+  chunk_size: 128
+  chunkwise_kernel: chunkwise--triton_xl_chunk_siging
+  sequence_kernel: native_sequence__triton
+  step_kernel: triton
+  autocast_kernel_dtype: "bfloat16"
+
+  # Throughput/stability toggles
+  gradient_checkpointing: false
+  fuse_per_block: true
+  use_unet: true
+
+  # Gate bias override as per TFLA guidance
+  override_gate_bias: true
+  igate_bias_init: -10.0
+  fgate_bias_start: 3.0
+  fgate_bias_end: 6.0
+
+dataset:
+  dataset_name: [STEAD, MLAAPDE]
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  norm_type: std
+  masking: 0.75
+  preload: false
+  eval_mask_seed: 2025
+
+encoder: { _name_: linear }
+decoder: { _name_: linear }
+
+loader:
+  batch_size: 32
+  drop_last: true
+  persistent_workers: true
+  num_workers: 12
+  pin_memory: true
+  prefetch_factor: 4
+
+train:
+  monitor: val/loss
+  mode: min
+  use_gradient_accumulation: true
+  gradient_accumulation_steps: 2
+  compile_model: false
+  # Optional manual grad clip (handled in code): can set here
+  clip_grad_norm: 1.0
+
+scheduler:
+  num_training_steps: 452100
+  num_warmup_steps: 45210
+
+trainer:
+  max_steps: 452100
+  precision: bf16-mixed
+  max_epochs: 50
+  gradient_clip_val: 0.0
+  accelerator: gpu
+  strategy: ddp
+  devices: 2
+  log_every_n_steps: 100
+  val_check_interval: 1.0
+
+task:
+  loss: masked_mse
+  loss_val: masked_mse
+  metrics: [masked_mse, mse]
+
+optim:
+  clip_grad_norm: 1.0
+

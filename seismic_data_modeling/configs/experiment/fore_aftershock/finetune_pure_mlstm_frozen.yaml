@@ -1,0 +1,67 @@
+# @package _global_
+# Pure mLSTM foreshock finetuning with FROZEN encoder (baseline like SeisLM)
+# Goal: Just get baseline results, not optimize
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_finetune_foreshock_FROZEN_baseline
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm
+  bidirectional: true
+  gradient_checkpointing: true
+
+train:
+  monitor: val/loss
+  mode: min
+  # NO UNFREEZING - Keep encoder frozen like SeisLM for baseline
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True   # KEEP FROZEN for baseline comparison
+
+dataset:
+  num_classes: 9
+  batch_size: 16  # Lower batch size for memory with gradient checkpointing
+  num_workers: 0
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 128
+
+optimizer:
+  lr: 1e-4           # VERY conservative LR - pure mLSTM extremely sensitive (2e-4 gave NaN)
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  fused: false
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 500
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 20       # Shorter training for baseline
+  gradient_clip_val: 1.0
+  val_check_interval: 0.5
+  precision: bf16-mixed

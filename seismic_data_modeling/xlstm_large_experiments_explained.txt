@@ -1,0 +1,76 @@
+XLSTM large experiments (mlstm_11m_unet.yaml, pure_mlstm_sequential_12m_foundation.yaml) - full code walk-through
+
+Harness (train.py)
+- Entry: hydra main in train.py loads configs/config.yaml then the selected experiment file. Defaults in the experiment file can pull in grouped configs (trainer, loader, dataset, task, optimizer, scheduler, model, encoder, decoder).
+- Registry-based instantiation (utils/config_utils.py, utils/registry.py): config._name_ selects a target class or function string which hydra.utils.get_method loads. instantiate(...) unpacks the config, deletes _name_, and calls the registered constructor.
+- LightningSequenceModel (train.py) owns dataset, encoder, backbone model, decoder, task/loss/metrics. It saves hparams, builds dataset (instantiate(registry.dataset, ...)), then encoder/decoder via tasks.encoders/decoders helpers, and the backbone via registry.model. Task object (tasks/task.py) wraps loss/metrics from tasks/metrics.py.
+- Forward: for SeisbenchDataLit datasets, batch is a dict; x=batch["X"], y=batch.get("y"). Encoder runs first, then model(x, state)->(hidden, state), then decoder if present. forward returns (prediction, target).
+- Training/validation/test steps call _step_with_metrics: choose loss vs loss_val, compute metrics, log to Lightning. training_step also logs trainer/loss and trainer/epoch. No manual gradient clipping in code; Lightning gradient_clip_val is used if set.
+- Optimizers: configure_optimizers builds optimizer from config (registry.optimizer) on params without _optim attribute. Scheduler optional; interval from config.train.interval. Returns Lightning dict with monitor=train.monitor.
+- Data loaders: LightningSequenceModel routes train_dataloader/val_dataloader/test_dataloader to dataset.*_dataloader(**loader cfg).
+- Trainer factory (create_trainer): builds TensorBoardLogger + WandbLogger (project final-seismology), LR monitor, top-k and last checkpoints under final_seismology_logs/final-seismology/<run>/checkpoints. Trainer kwargs come from config.trainer.
+- plot_and_save_training_examples saves a few raw training examples to the log dir before training.
+- load_checkpoint handles .ckpt or directory (picks highest step), loads hparams.yaml, rehydrates LightningSequenceModel.
+
+Data pipeline (dataloaders/seisbench_auto_reg.py + dataloaders/base.py)
+- SeisBenchAutoReg inherits SeisbenchDataLit (base class sets up Lightning dataloaders with worker_seeding). Accepts sample_len, bits, d_data, dataset_name list/str, norm_type, masking, preload, bidir_autoreg, wav2vec, training_fraction.
+- Builds one or more seisbench datasets (e.g., STEAD, MLAAPDE) at 100 Hz, component_order=ZNE, dimension_order=NCW. If no split column, creates 60/10/30 train/dev/test split. MultiWaveformDataset concatenates if multiple sets supplied.
+- Optional training_fraction downselects whole blocks for reproducibility (apply_training_fraction).
+- Augmentations for autoregressive pretrain:
+  * RandomWindow(windowlen=window_len, strategy="pad"); window_len=sample_len+1 if no masking and not bidir_autoreg else sample_len.
+  * FillMissingComponents.
+  * FilterZChannel when d_data==1 to drop horizontal.
+  * ChangeDtype(float32), Normalize(demean_axis=-1, amp_norm_axis=-1, amp_norm_type=norm_type).
+  * QuantizeAugmentation if bits>0 (here bits=0 so skipped).
+  * TransposeSeqChannels for 3-channel ZNE to move channels to last dim.
+  * If bidir_autoreg=True use CopyXY to set y=x. Else if wav2vec: skip masking. Else apply PretrainMask(p=masking) when masking>0, otherwise AutoregressiveShift. PretrainMask zeros/perturbs random blocks of length 20/50/100 until p fraction is covered and returns (x, mask) with mask=False where corrupted. AutoregressiveShift shifts y by one for standard next-step regression.
+- dataset_train/val/test are GenericGenerator with augmentations. If bits>0 sets num_classes. Dataloaders honor loader config (batch_size, num_workers, pin_memory, etc.). Returned batch: dict with X (tensor or (tensor, mask)), y target copy, metadata.
+- Base dataloaders (dataloaders/base.py) wire train/val/test_dataloader to torch DataLoader with worker_init_fn=worker_seeding.
+
+Encoders (tasks/encoders.py)
+- instantiate_encoder picks enc_registry[encoder._name_] and injects dataset.d_data and model.d_model (plus num_classes when needed). For pretrain encoders listed in pretrain_encoders it instantiates directly without dataset/model dims.
+- LinearEncoder: nn.Linear(in_features=d_data, out_features=d_model); adds channel dim if missing.
+- BidirAutoregEncoder: conv subsampling (two stride-2 Conv1d layers) reduces time by /4 and keeps channels (Conv1dSubampling). Optional random masking of segments (mask attribute) sets spans to zero. Then projects with Linear+Dropout. If pretraining=True (default) returns (features, downsampled_tokens) tuple; for finetuning it would return features alone.
+
+Decoders (tasks/decoders.py)
+- instantiate_decoder mirrors encoder logic. Uses model.d_model as in_features, dataset.d_data or num_classes as out_features. Phase-pick heads get d_model injected.
+- LinearDecoder: nn.Linear per time step from d_model to out_features (regression on 3 channels here).
+- UpsamplingDecoder: Conv1dUpsampling (stack of ConvTranspose1d layers doubling time twice) followed by Linear to out_features, used to restore sequence length after subsampling.
+
+Backbone model (models/xlstm_unet.py, registered as xlstm-unet)
+- Config dataclass UNetConfig holds architectural knobs (d_model, n_layers, pool list, expand factor, dropout, max_seq_len, block_type mlstm/slstm/mixed, bidirectional, gradient_checkpointing, fuse_per_block, mLSTM kernel params, sLSTM params, FF params, TFLA kernel names, gate bias overrides, etc.). use_unet flag switches between U-Net and pure sequential.
+- StageBlock wraps an xLSTMBlockStack. block_type selects mlstm or slstm stacks (or mixes per layer). bidirectional builds forward/back stacks with fusion Linear. fuse_per_block controls whether to fuse per layer (allows mixed types) or once per stage. gradient_checkpointing toggles torch.utils.checkpoint inside StageBlock.
+- TFLA Triton kernels: if mlstm + enable_tflakernels and mlstm_kernels available, StageBlock patches every mLSTMCell backend_fn to mLSTMBackend with chunkwise/sequence/step kernels from config and autocast dtype (default bfloat16). If TFLA missing and mlstm_backend=="chunkwise", falls back to chunkwise_simple backend. Optional gate bias override soft-caps gates and resets biases.
+- DownPool/UpPool: linear projections that fold/unfold pooled windows for U-Net skip connections (DownPool flattens pool steps then projects to expanded dim; UpPool projects then repeats to upsample and adds skip).
+- xLSTMUNetBackbone: if use_unet=True builds encoder stages + DownPool stack, center StageBlock, then UpPool + decoder stages with skips; else a single StageBlock over full resolution. Final LayerNorm on outputs; optional FP32 LayerNorm reductions for stability. forward runs under torch.autocast(dtype=bfloat16) for backbone and returns (activations, None).
+- PhasePickUNet is unused in these runs but wraps backbone + head for picking.
+
+Losses/metrics (tasks/metrics.py)
+- masked_mse checks for mask packaged with output or target ((tensor, mask) tuple). If mask provided, MSE computed only on masked positions; otherwise standard F.mse_loss. mse/log_mse/mae/accuracy/cross_entropy also available. bidirAutoregLoss and contrastive losses unused here.
+- Task wrapper (tasks/task.py) creates partial loss and loss_val functions and exposes metrics() mapping names to functions.
+
+Common logging/checkpoint behavior
+- WandB: project final-seismology, run name=config.experiment_name, version=current timestamp or ckpt basename. TensorBoard logger mirrors logs. ModelCheckpoint saves top-3 by val/loss and last checkpoints. LR monitor logs every step. plot_and_save_training_examples saves a few waveforms as PNG before training starts.
+
+Experiment: mlstm_11m_unet.yaml (configs/experiment/xlstm_large/mlstm_11m_unet.yaml)
+- Defaults pull trainer:default, loader:default, dataset:seisbench_auto_reg, task:regression, optimizer:adamw_mamba, scheduler:cosine_warmup, model:xlstm_unet, encoder:linear, decoder:linear.
+- Train: monitor val/loss (min), step-wise scheduler interval, manual grouping disables weight decay on bias/norm, compile_model=false, clip_grad_norm=1.0 noted but Lightning gradient_clip_val=0 (comment says manual clip; none implemented), max_steps=452100, max_epochs=50, val_check_interval=0.5. BF16 mixed precision. DDP on 2 GPUs, no grad accumulation. log_every_n_steps=100.
+- Loader: batch_size=64 per GPU, num_workers=24, pin_memory, drop_last, persistent_workers, prefetch_factor=8.
+- Dataset: SeisBenchAutoReg with sample_len=4096, bits=0 (floating point), datasets [STEAD, MLAAPDE], 3 channels, std normalization, masking=0.75 so PretrainMask active, eval_mask_seed=2025, no preload.
+- Task: regression with masked_mse for both train/val; metrics [masked_mse, mse].
+- Optimizer: AdamW lr=2e-3, weight_decay=0.05, betas (0.9, 0.95), fused=True. Scheduler cosine_warmup warmup 45,210 steps over 452,100 total.
+- Model: xLSTMUNetBackbone with d_model=80, n_layers=5 per stage, pool [4,4] (two down/ups), expand=2, dropout=0.1, block_type=mlstm, bidirectional=True, max_seq_len=4096, ff_proj_factor=1.6, mlstm_proj_factor=1.6, qkv_blocksize=4. TFLA kernels enabled, chunk_size=128, chunkwise kernel chunkwise--triton_xl_chunk, sequence native_sequence__triton, step triton, autocast_kernel_dtype=bfloat16, no gradient checkpointing. use_unet=True by default. Encoder/decoder are simple linear projections to/from d_model<->3 channels.
+- Runtime flow: batch['X']->LinearEncoder (3->80), through U-Net backbone (multi-resolution mlstm stacks with TFLA), LinearDecoder back to 3 channels; loss masked_mse uses masks injected by PretrainMask on X/Y.
+
+Experiment: pure_mlstm_sequential_12m_foundation.yaml (configs/experiment/xlstm_large/pure_mlstm_sequential_12m_foundation.yaml)
+- Defaults only _self_; all sections defined inline (replaces base experiment). DDP on 2 GPUs, max_steps=452100, max_epochs=55, val_check_interval=1.0, gradient_clip_val=0. BF16 mixed precision. No gradient accumulation.
+- Loader: batch_size=128, num_workers=12, pin_memory, drop_last, persistent_workers, prefetch_factor=4.
+- Dataset: SeisBenchAutoReg with sample_len=4096, bits=0, datasets [STEAD, MLAAPDE], 3 channels, std normalization, masking=0.75 (PretrainMask), no preload, eval_mask_seed=2025.
+- Task: regression masked_mse with metrics [masked_mse, mse]. Optimizer AdamW lr=2e-3, weight_decay=0.01, betas (0.9, 0.95), eps=1e-8, amsgrad=False, fused=True, foreach=False. Scheduler cosine_warmup with same warmup/total steps.
+- Model: xLSTMUNetBackbone configured as pure sequential (use_unet: false). d_model=176, n_layers=24 at full resolution, dropout=0.1, block_type=mlstm, bidirectional=True, mlstm_num_heads=4, conv1d_kernel_size=4, qkv_proj_blocksize=8, mlstm_proj_factor=2.0, mlstm_backend=chunkwise, fuse_per_block=True, gradient_checkpointing=False, TFLA enabled with chunk_size=128 and same kernels/dtype.
+- Encoder: bidir-autoreg-encoder (Conv1dSubampling reduces time by 4, projects to d_model, optional random zero masking if mask>0 not set here; returns (features, tokens) tuple in pretraining mode). Decoder: upsampling-decoder (ConvTranspose1d stack upsamples back to original length then Linear to 3 channels).
+- Runtime flow: batch['X'] passes through BidirAutoregEncoder to compressed features (and tokens), backbone runs 24 mlstm blocks at full resolution (no U-Net skips), UpsamplingDecoder restores time dimension and outputs 3-channel regression. masked_mse again limits loss to unmasked samples from PretrainMask.
+
+How a training run executes
+- Command typically: python train.py experiment=experiment/xlstm_large/mlstm_11m_unet (or pure_mlstm_sequential_12m_foundation). Hydra composes config, prints via OmegaConf.
+- LightningSequenceModel instantiated (or reloaded from ckpt), dataset is built, trainer created with loggers and checkpoints, plot_and_save_training_examples writes example PNGs, ModelSummary printed. trainer.fit runs ddp across 2 GPUs with configured steps/epochs. Checkpoints and logs land under final_seismology_logs/final-seismology/<timestamp>.

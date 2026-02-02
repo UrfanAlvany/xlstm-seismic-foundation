@@ -1,0 +1,114 @@
+# @package _global_
+# Improved mLSTM supervised for GEOFON - addressing Phase ID performance issues
+# Previous run (j59384842): lr=0.002, wd=0.1 → val/loss=0.0247, Phase ID=0.9010 POOR
+# This run: lr=0.001, wd=0.01 → targeting val/loss~0.024, Phase ID>0.99
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+  - _self_
+
+experiment_name: xlstm_mlstm_280k_3layer_geofon_improved_lr001_wd001
+
+train:
+  monitor: val/loss
+  mode: min
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+  interval: step
+
+trainer:
+  accelerator: gpu
+  strategy: auto
+  devices: 1
+  max_epochs: 100
+  gradient_clip_val: 0.0
+  log_every_n_steps: 5
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: false
+  precision: bf16-mixed
+  max_steps: -1
+  val_check_interval: 0.5
+  accumulate_grad_batches: 4
+
+loader:
+  batch_size: 64
+  num_workers: 12
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+
+dataset:
+  _name_: ethz-phase-pick
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: GEOFON
+  norm_type: std
+
+task:
+  _name_: phase_pick
+  loss: phase-pick
+
+# IMPROVED OPTIMIZER - lower lr and weight_decay
+optimizer:
+  _name_: adamw
+  lr: 0.001        # Lowered from 0.002
+  weight_decay: 0.01  # Lowered from 0.1
+  betas:
+  - 0.9
+  - 0.95
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: null
+  num_training_steps: null
+  warmup_fraction: 0.1
+
+# IMPROVED MODEL - better hyperparameters from xLSTM Mixed
+model:
+  _name_: xlstm-unet
+  d_model: 12
+  n_layers: 3
+  pool: [4, 4]
+  expand: 2
+  dropout: 0.05
+  block_type: mlstm
+  bidirectional: true
+  max_seq_len: 4096
+  mlstm_num_heads: 2
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 2
+  mlstm_proj_factor: 2.0   # Improved from 1.6 (xLSTM Mixed value)
+  mlstm_backend: chunkwise
+  ff_proj_factor: 1.6      # Improved from 1.3 (xLSTM Mixed value)
+  ff_act_fn: gelu
+  gradient_checkpointing: false
+  # TFLA/Triton kernels
+  chunkwise_kernel: chunkwise--triton_limit_chunk
+  sequence_kernel: native_sequence__triton
+  step_kernel: triton
+  chunk_size: 128
+  autocast_kernel_dtype: bfloat16
+  fuse_per_block: true
+
+encoder:
+  _name_: linear
+
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: false
+  kernel_size: 5
+  dropout: 0.1
+
+optim:
+  clip_grad_norm: 1.0

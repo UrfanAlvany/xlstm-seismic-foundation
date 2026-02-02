@@ -1,0 +1,72 @@
+# @package _global_
+# AGGRESSIVE unfreezing with CORRECT DIMENSIONS
+# Now that d_model mismatch is FIXED, try unfreezing with higher LR
+# Strategy: Higher LR + unfreeze at epoch 10 after decoder stabilizes
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_finetune_foreshock_AGGRESSIVE_UNFREEZE_FIXED_DIMS
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm  # Pure mLSTM blocks
+  bidirectional: true  # Keep bidirectional
+  gradient_checkpointing: true  # Enable to save memory
+  d_model: 176  # CRITICAL: Must match pretrained checkpoint!
+  load_decoder: false  # Reinitialize decoder for 9-class task
+
+train:
+  monitor: val/loss
+  mode: min
+  unfreeze_at_epoch: 10  # UNFREEZE after decoder stabilizes (dimensions now MATCH!)
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True   # Start frozen, unfreeze at epoch 10
+
+dataset:
+  num_classes: 9
+  batch_size: 8   # Keep small for stability
+  num_workers: 0
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.3
+  num_classes: 9
+  manual_input_dim: 176  # CRITICAL: Must match model.d_model!
+
+optimizer:
+  lr: 2e-3           # MUCH HIGHER LR - dimension mismatch is fixed!
+  weight_decay: 0.01 # MATCH PRETRAINING
+  betas: [0.9, 0.95] # MATCH PRETRAINING (CRITICAL!)
+  eps: 1e-08         # MATCH PRETRAINING (CRITICAL!)
+  fused: false
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 500      # Less warmup with higher LR
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 60
+  gradient_clip_val: 0.5     # Moderate clipping
+  val_check_interval: 0.5
+  precision: 32-true         # FULL PRECISION for stability
+  accumulate_grad_batches: 4

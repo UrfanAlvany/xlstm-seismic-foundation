@@ -1,0 +1,193 @@
+================================================================================
+COMPREHENSIVE DOCUMENTATION: xLSTM SEISMIC MODELS
+PART 5: VECTOR QUANTIZATION (VQ) EXPLAINED IN DEPTH
+================================================================================
+
+Purpose: Deep dive into Vector Quantization for discrete representation learning
+Relevance: Critical component of Config 2's contrastive learning
+
+================================================================================
+CONTENTS: VQ Theory | Product Quantization | Gumbel-Softmax | Implementation
+================================================================================
+
+WHAT IS VECTOR QUANTIZATION?
+============================
+
+VQ converts continuous vectors into discrete codes from a learned codebook.
+
+Input: Continuous vector x ∈ ℝ^D
+Codebook: K vectors {e_1, e_2, ..., e_K} ∈ ℝ^D
+Output: Discrete code index i* ∈ {1, ..., K} and quantized vector e_i*
+
+Quantization: i* = argmin_i ||x - e_i||²
+Reconstruction: x̂ = e_i*
+
+ANALOGY: K-means clustering
+  - Codebook vectors = cluster centers
+  - Quantization = assign to nearest center
+  - Training = update centers (like k-means)
+
+OUR CONFIGURATION:
+==================
+
+num_codevector_groups: 2
+num_codevectors_per_group: 320
+codevector_dim: 256
+
+This creates PRODUCT QUANTIZATION:
+  - Group 0: 320 codes × 128 dim
+  - Group 1: 320 codes × 128 dim
+  - Total: 640 code vectors, but 320×320 = 102,400 combinations!
+
+PRODUCT QUANTIZATION EXPLAINED:
+================================
+
+Standard VQ: Store K codes of dimension D
+  - Parameters: K × D
+  - Example: 640 × 256 = 163,840 params
+
+Product VQ: Split into G groups, K codes each of dimension D/G
+  - Parameters: G × K × (D/G) = K × D (SAME!)
+  - Combinations: K^G (EXPONENTIAL!)
+  - Example: 2 × 320 × 128 = 81,920 params, but 320² = 102,400 codes!
+
+Process:
+1. Split input: x = [x₁, x₂] where x₁, x₂ ∈ ℝ^(D/2)
+2. Quantize each: i₁* = argmin ||x₁ - e₁,i||², i₂* = argmin ||x₂ - e₂,j||²
+3. Concatenate: x̂ = [e₁,i₁*, e₂,i₂*]
+
+Benefit: More expressive with same parameters!
+
+GUMBEL-SOFTMAX TRICK:
+=====================
+
+Problem: argmin is non-differentiable
+Solution: Gumbel-Softmax for continuous relaxation
+
+Hard selection (non-differentiable):
+  i* = argmax_i (-||x - e_i||²)
+
+Soft selection (differentiable):
+  Logits: l_i = -||x - e_i||² / τ
+  Gumbel: g_i ~ -log(-log(U(0,1)))
+  Probs: p = softmax((l + g) / τ_gumbel)
+  Quantized: x̂ = Σ_i p_i · e_i
+
+Temperature annealing:
+  - Start: τ_gumbel = 2.0 (smooth, differentiable)
+  - End: τ_gumbel = 0.5 (sharp, near-discrete)
+
+DIVERSITY LOSS:
+===============
+
+Without regularization: Codebook collapse (only few codes used)
+
+Perplexity-based diversity:
+  Usage: n_i = count of times code i is used
+  Probs: p_i = n_i / Σ_j n_j
+  Entropy: H = -Σ_i p_i log(p_i)
+  Perplexity: P = exp(H)
+
+  Max perplexity: K (all codes equally used)
+  Min perplexity: 1 (only one code used)
+
+Diversity loss: L_div = -log(P / K)
+
+Our config: diversity_lambda = 0.1
+  Total loss = contrastive_loss + 0.1 × diversity_loss
+
+IMPLEMENTATION (simplified):
+============================
+
+```python
+class VectorQuantizer(nn.Module):
+    def __init__(self, num_groups=2, num_codes=320, dim=256):
+        self.codebooks = nn.ParameterList([
+            nn.Parameter(torch.randn(num_codes, dim//num_groups))
+            for _ in range(num_groups)
+        ])
+    
+    def forward(self, x, temperature=1.0):
+        # x: [B, T, 256]
+        groups = x.chunk(2, dim=-1)  # 2 × [B, T, 128]
+        
+        quantized = []
+        perplexities = []
+        
+        for x_g, codebook in zip(groups, self.codebooks):
+            # Distances: [B, T, 320]
+            dist = torch.sum((x_g.unsqueeze(2) - codebook) ** 2, dim=-1)
+            
+            # Gumbel-Softmax
+            logits = -dist / temperature
+            gumbel = -torch.log(-torch.log(torch.rand_like(logits) + 1e-10) + 1e-10)
+            probs = F.softmax((logits + gumbel) / self.gumbel_temp, dim=-1)
+            
+            # Quantized: [B, T, 128]
+            quant_g = torch.matmul(probs, codebook)
+            quantized.append(quant_g)
+            
+            # Perplexity
+            avg_probs = probs.mean(dim=(0,1))
+            H = -torch.sum(avg_probs * torch.log(avg_probs + 1e-10))
+            perplexities.append(torch.exp(H))
+        
+        quantized = torch.cat(quantized, dim=-1)  # [B, T, 256]
+        perplexity = sum(perplexities) / len(perplexities)
+        diversity_loss = -torch.log(perplexity / self.num_codes)
+        
+        return quantized, diversity_loss, perplexity
+```
+
+WHY VQ FOR CONTRASTIVE LEARNING?
+=================================
+
+Benefits:
+1. **Discrete targets**: Easier contrastive matching (finite set)
+2. **Compression**: Represent complex patterns with single code
+3. **Regularization**: Limits model capacity, prevents overfitting  
+4. **Interpretability**: Can inspect what each code represents
+5. **Transfer**: Codebook transfers across datasets
+
+Empirical results (Wav2Vec 2.0):
+  - With VQ: 1.8% WER
+  - Without VQ: 2.3% WER
+  → 28% relative improvement!
+
+MONITORING VQ DURING TRAINING:
+===============================
+
+Key metrics:
+  - Perplexity: Target 50-80% of num_codes (160-256 out of 320)
+  - Codebook usage: Histogram of code frequencies
+  - Temperature: Track Gumbel temperature schedule
+  - Diversity loss: Should decrease over time
+
+Warning signs:
+  - Perplexity < 50: Codebook collapse → increase diversity_lambda
+  - Perplexity > 300: Too uniform → decrease diversity_lambda
+  - Flat histogram: Good (uniform usage)
+  - Spiky histogram: Bad (few codes dominate)
+
+CODEBOOK INTERPRETATION:
+=========================
+
+After training, visualize learned codes:
+
+1. Decode codes to waveforms (if using autoencoder-style)
+2. t-SNE visualization of code embeddings
+3. Cluster analysis (which codes group together?)
+4. Semantic analysis (match codes to seismic events)
+
+Example findings:
+  - Code 15: P-wave onsets
+  - Code 87: S-wave onsets
+  - Code 203: Background noise
+  - Code 145: Surface waves
+  - ...
+
+This provides interpretable discrete representation of seismic signals!
+
+================================================================================
+END OF PART 5: VECTOR QUANTIZATION EXPLAINED
+================================================================================

@@ -1,0 +1,71 @@
+# @package _global_
+# sLSTM U-Net Unidirectional - Target 270k parameters (matching professor's approach)
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba        # Same as professor's SSM models
+  - /scheduler: linear      # Same as professor's SSM models  
+  - /model: xlstm_unet
+  - _self_
+
+experiment_name: slstm_unet_270k_unidirectional
+
+# MATCH PROFESSOR'S ENCODER/DECODER EXACTLY
+encoder:
+  _name_: linear                   # Same as all professor's small models
+
+decoder:
+  _name_: double-conv-phase-pick   # Same as all professor's models  
+  upsample: False
+  kernel_size: 5
+  dropout: 0.1
+
+# U-NET MODEL CONFIGURATION - UNIDIRECTIONAL VERSION
+model:
+  d_model: 20                     # Increased for unidirectional to hit 270k params
+  n_layers: 3                     # 3 layers per stage (professor's standard)
+  block_type: "slstm"             # sLSTM blocks
+  bidirectional: false            # UNIDIRECTIONAL processing
+  unet: true                      # Enable U-Net architecture
+  expand: 2                       # Expansion factor 2 (professor's standard)
+  pool:                           # Pooling by factor 4 (professor's standard)
+    - 4
+    - 4
+  dropout: 0.0                     
+  max_seq_len: 4096
+  slstm_num_heads: 4              # 20 % 4 = 0 (compatible)
+
+# MATCH PROFESSOR'S TRAINING EXACTLY
+train:
+  monitor: val/loss
+  mode: min
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: ETHZ
+  norm_type: std
+
+loader:
+  batch_size: 256                 # Same as mamba/sashimi
+  drop_last: True
+  persistent_workers: True        # Same as professor
+
+# MATCH PROFESSOR'S OPTIMIZATION
+scheduler:
+  num_warmup_steps: 880           # Same as professor's SSM models
+  num_training_steps: 8800
+
+trainer:
+  max_steps: 8800                 # Same as professor
+  max_epochs: 100
+  log_every_n_steps: 20
+  gradient_clip_val: 1.0          # Same as professor
+
+# PARAMETER CALCULATION:
+# Unidirectional sLSTM U-Net needs larger d_model to compensate for 
+# lack of bidirectional processing while hitting 270k parameter target
+# d_model=20, n_layers=3, expand=2, pool=[4,4], unidirectional → ~270k params

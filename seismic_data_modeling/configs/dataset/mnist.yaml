@@ -1,0 +1,4 @@
+_name_: mnist
+data_dir: dataloaders/data
+val_split: 0.1
+seed: 42

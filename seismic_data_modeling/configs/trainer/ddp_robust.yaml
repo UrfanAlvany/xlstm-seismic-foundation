@@ -1,0 +1,16 @@
+accelerator: gpu
+strategy: ddp
+devices: 2
+accumulate_grad_batches: 1
+max_epochs: 100
+gradient_clip_val: 1.0
+log_every_n_steps: 20
+limit_train_batches: 1.0
+limit_val_batches: 1.0
+enable_model_summary: false
+precision: bf16-mixed
+
+# DDP specific settings for robustness
+ddp_timeout: 7200  # 2 hours timeout instead of default 30 minutes
+ddp_find_unused_parameters: false
+ddp_bucket_cap_mb: 25

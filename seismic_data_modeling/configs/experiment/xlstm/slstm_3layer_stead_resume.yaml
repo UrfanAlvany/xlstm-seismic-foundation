@@ -1,0 +1,91 @@
+# @package _global_
+# xLSTM sLSTM-only U-Net — Resume from j59954914 checkpoint
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+  - _self_
+
+experiment_name: xlstm_slstm_280k_3layer_stead_triton_october_resume
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step         # SeisLM-style per-step scheduling
+
+
+trainer:
+  max_steps: -1
+  val_check_interval: 0.5
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  max_epochs: 25
+  precision: bf16-mixed
+  enable_model_summary: false
+  log_every_n_steps: 5
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 4
+
+loader:
+  batch_size: 64
+  num_workers: 12
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: STEAD
+  norm_type: std
+
+task:
+  _name_: phase_pick
+  loss: phase-pick
+
+scheduler:
+  _name_: cosine_warmup
+  # SeisLM-style: derive steps from dataloader × epochs
+  num_warmup_steps: null
+  num_training_steps: null
+  warmup_fraction: 0.1
+
+model:
+  _name_: xlstm-unet
+  d_model: 12
+  n_layers: 3
+  pool: [4, 4]
+  expand: 2
+  dropout: 0.05
+  block_type: slstm
+  bidirectional: true
+  max_seq_len: 4096
+  # Resume from previous checkpoint
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-26__22_00_45__j59954914/checkpoints/epoch=6-step=27319.ckpt
+  # sLSTM hyperparams (used for sLSTM blocks)
+  slstm_num_heads: 4
+  slstm_conv1d_kernel_size: 4
+  slstm_bias_init: powerlaw_blockdependent
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+  gradient_checkpointing: false
+  fuse_per_block: true
+
+
+encoder:
+  _name_: linear
+
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: false
+  kernel_size: 5
+  dropout: 0.1
+
+optim:
+  clip_grad_norm: 1.0
