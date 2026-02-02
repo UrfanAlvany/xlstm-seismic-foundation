@@ -1,6 +1,6 @@
 <div align="center">
 
-# SeisLM-xLSTM
+# WaveXLSTM
 
 ### Extended LSTM for Self-Supervised Seismology
 
@@ -8,7 +8,6 @@
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![Lightning](https://img.shields.io/badge/Lightning-2.0+-792ee5.svg)](https://lightning.ai/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![arXiv](https://img.shields.io/badge/arXiv-2025.xxxxx-b31b1b.svg)](https://arxiv.org/)
 
 [**Getting Started**](#quick-start) | [**Architecture**](#architecture) | [**Experiments**](#experiments) | [**Results**](#results) | [**Citation**](#citation)
 
@@ -16,16 +15,15 @@
 
 ---
 
-## What is SeisLM-xLSTM?
+## What is WaveXLSTM?
 
-**SeisLM-xLSTM** applies Extended Long Short-Term Memory (xLSTM) to seismology, using a **U-Net architecture with mLSTM/sLSTM blocks** for self-supervised learning on seismic waveforms.
+**WaveXLSTM** applies Extended Long Short-Term Memory (xLSTM) to seismology, using a **U-Net architecture with mLSTM/sLSTM blocks** for self-supervised learning on seismic waveforms.
 
-Building on the success of [SeisLM](https://github.com/seisbench/seislm) and inspired by [Wav2Vec 2.0](https://arxiv.org/abs/2006.11477), we pretrain on **5M+ seismic waveforms** from 8 global datasets using contrastive learning with Gumbel-Softmax vector quantization. The pretrained model transfers effectively to downstream tasks including **phase picking**, **foreshock-aftershock classification**, and **Mars InSight seismology**.
+Building on the success of [SeisLM](https://github.com/seisbench/seislm) and inspired by [Wav2Vec 2.0](https://arxiv.org/abs/2006.11477), we pretrain on **5M+ seismic waveforms** from 8 global datasets using contrastive learning with Gumbel-Softmax vector quantization. The pretrained model transfers effectively to downstream tasks including **phase picking** and **foreshock-aftershock classification**.
 
 Key contributions:
 - **xLSTM U-Net** combining bidirectional mLSTM blocks with skip connections for multi-scale temporal modeling
 - **TFLA Triton kernels** enabling efficient mLSTM computation with linear memory scaling
-- **Cross-planetary transfer**: Models pretrained on Earth data generalize to Mars seismology
 
 ---
 
@@ -36,14 +34,20 @@ Key contributions:
 - **xLSTM U-Net Backbone** with bidirectional mLSTM/sLSTM blocks and skip connections
 - **Multi-scale pooling** (4096 → 1024 → 256 tokens) capturing both fine-grained arrivals and long-range structure
 - **TFLA Triton kernels** for hardware-efficient mLSTM with BF16 mixed precision
-- **Configurable scale**: 11M (base) to 50M+ (large) parameters
+- **Configurable scale**: 270K (supervised) to 20M (self-supervised) parameters
 
 ### Pretraining
 
-- **8 datasets**: ETHZ, GEOFON, STEAD, InstanceCounts, MLAAPDE, Iquique, PNW, OBST2024
-- **Wav2Vec 2.0-style objective**: InfoNCE contrastive loss + Gumbel-Softmax vector quantization
-- **Masking strategy**: Random span masking over latent representations
-- **Quantizer**: 2 groups × 320 codevectors × 256-D (640 total codes)
+**mLSTM-CR-large (Contrastive):**
+- **8 datasets**: ETHZ, GEOFON, STEAD, INSTANCE, MLAAPDE, Iquique, PNW, OBST2024
+- **Training**: 40 epochs, ~7 days on 4×H200, batch size 64 (global 1024)
+- **Wav2Vec 2.0-style objective**: InfoNCE contrastive loss + Gumbel-Softmax VQ
+- **Quantizer**: 2 groups × 320 codewords = 640 codes, ~510 perplexity (80% usage)
+
+**mLSTM-Seq-large (Masked Reconstruction):**
+- **2 datasets**: STEAD + MLAAPDE (~2M waveforms)
+- **Training**: 45 epochs, ~7 days on 2×H200, batch size 128
+- **Masking**: 75% masking ratio, span length 10
 
 ### Downstream Tasks
 
@@ -51,14 +55,13 @@ Key contributions:
 |------|-------------|---------|
 | **Phase Picking** | P/S wave arrival detection | Regression / 3-class |
 | **Foreshock Classification** | Temporal classification relative to mainshock | 2 or 9 classes |
-| **Mars InSight** | Cross-planetary seismology transfer | Various |
 
 ---
 
 ## Architecture
 
 ```
-                           SeisLM-xLSTM Architecture
+                             WaveXLSTM Architecture
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
     │   Input Waveform                                                    │
@@ -110,11 +113,13 @@ Key contributions:
 
 **Model Configurations:**
 
-| Config | d_model | Layers/Stage | Parameters | Use Case |
-|--------|---------|--------------|------------|----------|
-| Base | 128 | 3 | ~11M | Standard pretraining |
-| Large | 176 | 24 | ~50M | Foundation model |
-| Lite | 80 | 3 | ~4M | Fast experimentation |
+| Config | d_model | Layers | Parameters | Use Case |
+|--------|---------|--------|------------|----------|
+| Small (sLSTM/mLSTM) | 12-64 | 5×3 | ~270K | Supervised phase picking |
+| mLSTM-CR-large | 128 | 5×3 | **20.3M** | Contrastive pretraining |
+| mLSTM-Seq-large | 176 | 24 | **12.3M** | Masked reconstruction |
+
+*Layer notation: 5×3 = 5 stages × 3 blocks per stage = 15 total blocks*
 
 ---
 
@@ -123,12 +128,12 @@ Key contributions:
 ### 1. Clone and Setup Environment
 
 ```bash
-git clone https://github.com/your-username/seislm-xlstm.git
-cd seislm-xlstm
+git clone https://github.com/your-username/wavexlstm.git
+cd wavexlstm
 
 # Create conda environment
-conda create -n seislm-xlstm python=3.10
-conda activate seislm-xlstm
+conda create -n wavexlstm python=3.10
+conda activate wavexlstm
 
 # Install PyTorch (CUDA 11.8 example)
 pip install torch==2.1.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -170,7 +175,7 @@ python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
 
 **Fine-tune on Phase Picking:**
 ```bash
-python simple_train.py experiment=phase_picking/xlstm_unet \
+python simple_train.py experiment=phase_picking/fine_tune_xlstm_ethz_seislm \
     model.checkpoint_path=/path/to/pretrained.ckpt \
     trainer.max_epochs=30
 ```
@@ -187,14 +192,13 @@ python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \
 ## Project Structure
 
 ```
-seislm-xlstm/
+wavexlstm/
 ├── simple_train.py              # Main training script (PyTorch Lightning)
 ├── configs/
 │   ├── experiment/              # Experiment configurations
 │   │   ├── contrastive/         # Pretraining configs
 │   │   ├── phase_picking/       # Phase picking fine-tuning
 │   │   ├── fore_aftershock/     # Foreshock classification
-│   │   ├── mars/                # Mars InSight experiments
 │   │   └── xlstm_large/         # Large-scale foundation models
 │   ├── model/                   # Model architecture configs
 │   ├── dataset/                 # Dataset configurations
@@ -225,18 +229,15 @@ seislm-xlstm/
 | Task | Config Path | Description |
 |------|-------------|-------------|
 | **Pretraining** | | |
-| Contrastive (Base) | `contrastive/xlstm_unet_seisbench` | 11M params, 8 datasets, 50 epochs |
-| Contrastive (ETHZ) | `contrastive/xlstm_unet_ethz` | Single dataset variant |
+| Contrastive (Large) | `contrastive/xlstm_unet_seisbench_large` | 20.3M params, 8 datasets |
+| Contrastive (Small) | `contrastive/xlstm_unet_seisbench` | ~270K params |
 | **Phase Picking** | | |
-| xLSTM U-Net | `phase_picking/xlstm_unet` | P/S arrival detection |
+| ETHZ | `phase_picking/fine_tune_xlstm_ethz_seislm` | P/S arrival detection |
+| GEOFON | `phase_picking/fine_tune_xlstm_geofon_seislm` | P/S arrival detection |
+| STEAD | `phase_picking/fine_tune_xlstm_stead_seislm` | P/S arrival detection |
 | **Foreshock Classification** | | |
-| 9-Class | `fore_aftershock/finetune_xlstm_unet` | Temporal bin classification |
-| 2-Class | `fore_aftershock/finetune_xlstm_unet_2class` | Binary fore/aftershock |
-| Few-Shot (5%) | `fore_aftershock/finetune_xlstm_unet_fewshot` | Limited data regime |
-| Frozen Encoder | `fore_aftershock/finetune_frozen_encoder_only` | Linear probe |
-| Random Init | `fore_aftershock/finetune_xlstm_unet_random_init` | Ablation (no pretraining) |
-| **Mars InSight** | | |
-| Transfer | `mars/xlstm_unet_mars` | Cross-planetary transfer |
+| xLSTM U-Net | `fore_aftershock/finetune_xlstm_unet` | 9-class temporal classification |
+| Pure mLSTM variants | `fore_aftershock/finetune_pure_mlstm_*` | Multiple configurations |
 
 ### Training Commands
 
@@ -247,9 +248,8 @@ python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
     trainer.strategy=ddp \
     data.batch_size=64
 
-# Few-shot foreshock classification
-python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet_fewshot \
-    data.train_fraction=0.1 \
+# Foreshock classification
+python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \
     model.checkpoint_path=/path/to/pretrained.ckpt
 
 # Debug run (fast iteration)
@@ -261,51 +261,45 @@ python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \
 
 ## Results
 
-### Pretraining
-
-| Model | Params | Datasets | Contrastive Acc | Codebook Usage |
-|-------|--------|----------|-----------------|----------------|
-| xLSTM U-Net Base | 11M | 8 | TBD | TBD |
-| xLSTM U-Net Large | 50M | 8 | TBD | TBD |
-
-### Phase Picking (SeisBench Benchmark)
-
-| Model | P Precision | P Recall | P F1 | S Precision | S Recall | S F1 |
-|-------|-------------|----------|------|-------------|----------|------|
-| PhaseNet | - | - | - | - | - | - |
-| EQTransformer | - | - | - | - | - | - |
-| SeisLM | - | - | - | - | - | - |
-| **xLSTM U-Net (Ours)** | TBD | TBD | TBD | TBD | TBD | TBD |
-
 ### Foreshock-Aftershock Classification (2016 Central Italy)
 
-| Model | Pretraining | 9-Class Acc | 2-Class Acc | F1 Macro |
-|-------|-------------|-------------|-------------|----------|
-| SeisLM | Contrastive | - | - | - |
-| xLSTM U-Net | None | TBD | TBD | TBD |
-| **xLSTM U-Net (Ours)** | Contrastive | TBD | TBD | TBD |
+| Model | Accuracy | Parameters |
+|-------|----------|------------|
+| ConvNet baseline | 58.33% | - |
+| SeisLM-base | 65.11% | 11.4M |
+| SeisLM-large | 74.22% | 93.7M |
+| mLSTM-Seq-large | 67.17% | 12.3M |
+| **mLSTM-CR-large** | **76.96%** | **20.3M** |
 
-### Few-Shot Learning
+*mLSTM-CR-large achieves SOTA (+2.74% over SeisLM-large) with 78% fewer parameters*
 
-| Data Fraction | SeisLM | xLSTM U-Net (Ours) |
-|---------------|--------|---------------------|
-| 5% | - | TBD |
-| 10% | - | TBD |
-| 20% | - | TBD |
-| 50% | - | TBD |
-| 100% | - | TBD |
+### Phase Picking (ETHZ Dataset)
+
+| Model | Event AUC | Phase AUC | P-RMSE (s) | S-RMSE (s) |
+|-------|-----------|-----------|------------|------------|
+| PhaseNet | 0.990 | 0.998 | 0.297 | 0.467 |
+| EQTransformer | 0.960 | 0.998 | 0.355 | 0.519 |
+| sLSTM-small | 0.992 | 0.998 | **0.214** | 0.465 |
+| mLSTM-small | **0.993** | **0.999** | 0.228 | **0.425** |
+
+### Pretraining Metrics
+
+| Model | Params | Datasets | Codebook Perplexity |
+|-------|--------|----------|---------------------|
+| mLSTM-CR-large | 20.3M | 8 | ~510 (80% usage) |
+| mLSTM-Seq-large | 12.3M | 2 | N/A (reconstruction) |
 
 ---
 
 ## Citation
 
-If you use SeisLM-xLSTM in your research, please cite:
+If you use WaveXLSTM in your research, please cite:
 
 ```bibtex
-@mastersthesis{seislm-xlstm2025,
-  title     = {Extended LSTM for Self-Supervised Seismology},
-  author    = {Author Name},
-  school    = {University Name},
+@mastersthesis{wavexlstm2025,
+  title     = {WaveXLSTM: Extended LSTM for Self-Supervised Seismology},
+  author    = {Alvani, Urfan},
+  school    = {University of Basel},
   year      = {2025},
   note      = {Master's Thesis}
 }
@@ -353,6 +347,6 @@ This project builds on excellent open-source work:
 
 <div align="center">
 
-**[Back to Top](#seislm-xlstm)**
+**[Back to Top](#wavexlstm)**
 
 </div>
