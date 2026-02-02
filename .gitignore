@@ -1,4 +1,17 @@
 checkpoints/
+evaluation_results/
+thesis_plots/
 __pycache__/
 *.pyc
 .DS_Store
+outputs/
+wandb_logs/
+checkpoints/
+evaluation_results/
+thesis_plots/
+__pycache__/
+*.pyc
+.DS_Store
+outputs/
+wandb_logs/
+evaluation/eval_tasks/
