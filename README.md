@@ -18,12 +18,12 @@
 
 ## What is SeisLM-xLSTM?
 
-**SeisLM-xLSTM** is the first application of Extended Long Short-Term Memory (xLSTM) to seismology, introducing a novel **U-Net architecture with mLSTM/sLSTM blocks** for self-supervised learning on seismic waveforms.
+**SeisLM-xLSTM** applies Extended Long Short-Term Memory (xLSTM) to seismology, using a **U-Net architecture with mLSTM/sLSTM blocks** for self-supervised learning on seismic waveforms.
 
 Building on the success of [SeisLM](https://github.com/seisbench/seislm) and inspired by [Wav2Vec 2.0](https://arxiv.org/abs/2006.11477), we pretrain on **5M+ seismic waveforms** from 8 global datasets using contrastive learning with Gumbel-Softmax vector quantization. The pretrained model transfers effectively to downstream tasks including **phase picking**, **foreshock-aftershock classification**, and **Mars InSight seismology**.
 
 Key contributions:
-- **Novel xLSTM U-Net** combining bidirectional mLSTM blocks with skip connections for multi-scale temporal modeling
+- **xLSTM U-Net** combining bidirectional mLSTM blocks with skip connections for multi-scale temporal modeling
 - **TFLA Triton kernels** enabling efficient mLSTM computation with linear memory scaling
 - **Cross-planetary transfer**: Models pretrained on Earth data generalize to Mars seismology
 
