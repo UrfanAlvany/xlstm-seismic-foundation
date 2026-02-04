@@ -1,0 +1,69 @@
+# @package _global_
+# Aggressive Mamba-style experiment
+# Strategy: Unfreeze from start, higher LR, reduced weight decay, L2 regularization
+# Expected improvement: +2-4% over baseline (69.18% -> 71-73%)
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: XLSTM_UNET_finetune_foreshock_mamba_style
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/epoch=39-step=605261.ckpt
+
+train:
+  monitor: val/loss
+  mode: min
+  # KEY CHANGE: No unfreezing epoch - encoder trainable from start
+  # unfreeze_at_epoch: 0  # (omit to keep encoder trainable from start)
+  # Add L2 regularization toward pretrained weights (Mamba-style)
+  l2: True
+  l2_lambda: 0.01
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: False   # KEY: Encoder trainable from start like Mamba!
+
+dataset:
+  num_classes: 9
+  batch_size: 32
+  num_workers: 0
+  dimension_order: NWC   # Correct format for encoder
+  demean_axis: 1         # Normalize across time
+  amp_norm_axis: 1       # Normalize across time
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 128
+
+optimizer:
+  lr: 8e-4           # Higher LR (midpoint between baseline and Mamba)
+  weight_decay: 0.05 # Reduced weight decay like Mamba
+  betas: [0.9, 0.95]
+  fused: false       # Must disable fused for gradient clipping
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 1000     # More warmup for aggressive LR
+  num_training_steps: 0      # Auto-compute
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 35             # Longer training like Mamba
+  gradient_clip_val: 1.0     # Gradient clipping like Mamba
+  val_check_interval: 0.5
+  precision: bf16-mixed

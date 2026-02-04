@@ -1,0 +1,5 @@
+_name_: contrastive
+loss:
+  _name_: sampled-contrastive-loss
+  diversity_lambda: 0.1
+metrics: sampled-contrastive-loss

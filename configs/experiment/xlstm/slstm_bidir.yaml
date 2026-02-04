@@ -1,0 +1,69 @@
+# @package _global_
+# sLSTM U-Net - Target 270k parameters (matching professor's approach)
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba        # Same as professor's SSM models
+  - /scheduler: linear      # Same as professor's SSM models  
+  - /model: xlstm
+  - _self_
+
+experiment_name: slstm_unet_270k
+
+# MATCH PROFESSOR'S ENCODER/DECODER EXACTLY
+encoder:
+  _name_: linear                   # Same as all professor's small maps
+
+decoder:
+  _name_: double-conv-phase-pick   # Same as all professor's models  
+  upsample: False
+  kernel_size: 5
+  dropout: 0.1
+
+# U-NET MODEL CONFIGURATION (Following professor's exact structure)
+model:
+  d_model: 16                     # Adjusted for ~270k params
+  n_layers: 3                      # 3 layers per stage (professor's standard)
+  block_type: "slstm"              # sLSTM blocks
+  bidirectional: true              # Same as professor's bidirectional SSMs
+  unet: true                       # Enable U-Net architecture
+  expand: 2                        # Expansion factor 2 (professor's standard)
+  pool:                            # Pooling by factor 4 (professor's standard)
+    - 4
+    - 4
+  dropout: 0.0                     
+  max_seq_len: 4096
+
+# MATCH PROFESSOR'S TRAINING EXACTLY
+train:
+  monitor: val/loss
+  mode: min
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: ETHZ
+  norm_type: std
+
+loader:
+  batch_size: 256                  # Same as mamba/sashimi
+  drop_last: True
+  persistent_workers: True         # Same as professor
+
+# MATCH PROFESSOR'S OPTIMIZATION
+scheduler:
+  num_warmup_steps: 880            # Same as professor's SSM models
+  num_training_steps: 8800
+
+trainer:
+  max_steps: 8800                  # Same as professor
+  max_epochs: 100
+  log_every_n_steps: 20
+  gradient_clip_val: 1.0           # Same as professor
+
+# If you need optimizer settings (uncomment if needed)
+# optimizer:
+#   weight_decay: 0                # Same as sashimi model

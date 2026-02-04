@@ -1,0 +1,13 @@
+_name_: contrastive
+
+model_backbone: 'pure_hydra'
+d_model: 256
+n_layers: 20
+d_state: 64
+d_conv: 7
+expand: 2
+headdim: 64 # 8 heads
+use_mem_eff_path: True
+final_projection_dim: 256
+num_negatives: 100
+temperature: 0.1

@@ -1,0 +1,95 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: contrastive
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_pretrain_SeisLMStyle
+
+train:
+  monitor: train/contrastive_loss
+  mode: min
+  interval: step
+  # SeisLM-style gumbel temperature anneal
+  gumbel_min_temperature: 0.5
+  gumbel_max_temperature: 2.0
+  # Disable Lightning grad clipping; use manual clip in optim
+  disable_pretraining: false
+
+dataset:
+  _name_: ethz-auto-reg
+  dataset_name: [ETHZ, GEOFON, STEAD, MLAAPDE, INSTANCE, Iquique, PNW, OBST2024]
+  sample_len: 8192
+  d_data: 3
+  norm_type: std
+  training_fraction: 1.0
+  wav2vec: true  # activate wav2vec-style windows if supported
+
+model:
+  _name_: contrastive
+  model_backbone: 'xlstm_unet'
+  d_model: 128
+  n_layers: 3
+  max_seq_len: 4096
+  bidirectional: true
+  dropout: 0.10
+  # Use mLSTM in backbone like your finetune ckpt
+  block_type: mlstm
+  ff_proj_factor: 1.6
+  final_projection_dim: 256
+  quantize: true
+  quantizer_args:
+    num_codevector_groups: 2
+    num_codevectors_per_group: 320
+    conv_dim: [256]
+    codevector_dim: 256
+
+encoder:
+  _name_: conv-down-encoder-contrastive
+  n_layers: 2
+  kernel_size: 3
+  dim: 256
+  stride: 2
+  pretraining: true
+  mask_prob: 0.65
+  mask_length: 10
+  same_mask_length: true
+
+decoder: null
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  prefetch_factor: 2
+  pin_memory: true
+  drop_last: true
+
+optimizer:
+  lr: 2e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+  fused: true
+  foreach: false
+
+optim:
+  clip_grad_norm: 1.0
+
+scheduler:
+  _name_: cosine_warmup
+  warmup_fraction: 0.2
+  num_training_steps: null
+  num_warmup_steps: null
+
+trainer:
+  max_steps: -1
+  max_epochs: 100
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  precision: bf16-mixed
+  log_every_n_steps: 10
+  val_check_interval: 1.0  # validate each epoch if you add dev loaders

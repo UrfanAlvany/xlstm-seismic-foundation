@@ -1,0 +1,21 @@
+# @package _global_
+
+defaults:
+  - _self_
+  #- dataset: mnist
+  #- model: dummy
+  #- optimizer: adam
+  #- scheduler: plateau
+  #- trainer: default
+  #- task: classification
+  #- loader: default
+  - experiment: default
+
+train:
+  monitor: val/loss
+  mode: min
+
+  optimizer_param_grouping:
+    bias_weight_decay: False
+    normalization_weight_decay: False
+

@@ -1,0 +1,77 @@
+# @package _global_
+# Pure sLSTM Unidirectional - 270k parameters
+defaults:
+  
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_hydra
+  - /scheduler: linear
+  - /model: xlstm
+  - _self_
+
+experiment_name: pure_slstm_bidrectional_270k
+
+# Encoder and Decoder (same as thesis baseline)
+encoder:
+  _name_: linear
+
+decoder:
+  _name_: phase-pick
+  convolutional: True
+  kernel_size: 33
+
+# Model configuration - TARGET 270k parameters
+model:
+  d_model: 64                  # Validated dimension
+  n_layers: 4                  # Double layers (no bidirectional cost)
+  block_type: "slstm"          # Pure sLSTM architecture
+  bidirectional: true         # Unidirectional processing
+  max_seq_len: 4096
+  gradient_checkpointing: true # Memory optimization
+
+# Training configuration (thesis-compatible)
+loader:
+  batch_size: 512               # Can handle larger batch without bidirectional
+  drop_last: True
+  num_workers: 4
+  pin_memory: true
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step
+
+trainer:
+  max_steps: 8800              # Standard thesis training
+  max_epochs: 200
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  gradient_clip_val: 0.5
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed        # Memory efficient
+
+# Dataset configuration (thesis standard)
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: ETHZ
+  norm_type: std
+  
+# Optimizer (thesis standard)
+optimizer:
+  lr: 0.0008
+  weight_decay: 1.0e-05
+
+# Scheduler (thesis standard)
+scheduler:
+  num_warmup_steps: 528        # 6% warmup
+  num_training_steps: 8800
+
+# Task (thesis standard)
+task:
+  loss: phase-pick
+  metrics: [accuracy, roc_auc, f1_score]

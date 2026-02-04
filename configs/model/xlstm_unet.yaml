@@ -1,0 +1,40 @@
+_name_: xlstm-unet
+
+# Core U-Net architecture parameters
+d_model: 128                     # Starting dimension (will expand through U-Net)
+n_layers: 3                      # Layers per U-Net stage
+pool: [4, 4]                     # Pooling factors (creates 5 total stages)
+expand: 2                        # Expansion factor between stages
+dropout: 0.0
+
+# xLSTM block selection
+block_type: "mlstm"              # "slstm" | "mlstm"
+bidirectional: true              # Enable bidirectional processing
+max_seq_len: 4096
+
+# sLSTM configuration
+slstm_num_heads: 4
+slstm_conv1d_kernel_size: 4
+slstm_bias_init: "powerlaw_blockdependent"
+
+# mLSTM configuration
+mlstm_num_heads: 4
+mlstm_qkv_proj_blocksize: 4
+mlstm_conv1d_kernel_size: 4
+mlstm_proj_factor: 2.0
+mlstm_backend: chunkwise         # Use chunkwise kernel when available
+
+# FeedForward configuration
+ff_proj_factor: 1.3
+ff_act_fn: "gelu"
+
+# TFLA Triton kernels (enabled by default)
+enable_tflakernels: true
+chunk_size: 128
+chunkwise_kernel: "chunkwise--triton_xl_chunk"
+sequence_kernel: "native_sequence__triton"
+step_kernel: "triton"
+autocast_kernel_dtype: "bfloat16"
+
+# Memory optimization
+gradient_checkpointing: false    # May be overridden by experiment config

@@ -1,0 +1,3 @@
+_name_: patch-regression
+loss: patch-huber-loss
+metrics: patch-huber-loss

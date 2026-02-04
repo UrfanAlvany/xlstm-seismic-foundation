@@ -1,0 +1,130 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: contrastive
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: contrastive_wrapper
+
+experiment_name: WAV2VEC_xlstm_unet_SEISBENCH_LARGE
+
+# Large xLSTM U-Net contrastive pretraining (~110M with U-Net 4 layers per stage)
+model:
+  model_backbone: 'xlstm_unet'
+  # 4 blocks per stage (down, center, up) = 4 x 5 = 20 total mLSTM blocks
+  # Matches seisLM's 2x depth scaling strategy (base 6→large 12, ours 15→20)
+  n_layers: 4
+  # Scale width to 256 for kernel efficiency (head_dim=64 with 4 heads)
+  d_model: 256
+  expand: 2
+  pool: [4, 4]
+  bidirectional: true
+  use_unet: True
+
+  dropout: 0.0  # ✅ Match seisLM: NO dropout during pretraining (only in fine-tuning)
+  # mLSTM internals
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 2.0
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+
+  # TFLA kernels and efficiency settings
+  enable_tflakernels: true
+  gradient_checkpointing: true
+  fuse_per_block: true
+  chunk_size: 128
+  chunkwise_kernel: 'chunkwise--triton_xl_chunk'
+  sequence_kernel: 'native_sequence__triton'
+  step_kernel: 'triton'
+  autocast_kernel_dtype: 'bfloat16'
+
+  # Contrastive/VQ head
+  final_projection_dim: 256
+  num_negatives: 100
+  temperature: 0.1
+  quantize: true
+  use_mem_eff_path: true
+  only_masked: false
+  quantizer_args:
+    num_codevector_groups: 2
+    num_codevectors_per_group: 320
+    # Match encoder conv feature width (x_normalized) for quantizer
+    conv_dim: [256]
+    codevector_dim: 256
+    scale_logits_in_quantization: true
+
+train:
+  monitor: val/loss
+  mode: min
+  diversity_lambda: 0.1
+  clip_grad_norm: 1.0
+  # SeisLM-style gumbel temperature schedule
+  gumbel_min_temperature: 0.5
+  gumbel_max_temperature: 2.0
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0  # ✅ Match seisLM: NO weight decay during pretraining
+
+dataset:
+  dataset_name:
+    - ETHZ
+    - GEOFON
+    - STEAD
+    - InstanceCounts
+    - MLAAPDE
+    - Iquique
+    - PNW
+    - OBST2024
+  training_fraction: 1.0
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  norm_type: std
+  wav2vec: true
+
+encoder:
+  _name_: conv-down-encoder-contrastive
+  kernel_size: 3
+  n_layers: 2
+  dim: 256         # conv feature width for quantizer and masking
+  stride: 2
+  mask_prob: 0.65
+  mask_length: 10
+  mask_channel_prob: 0.0
+  mask_channel_length: 1
+  bert_style: false
+
+decoder:
+  _name_: dummy
+
+loader:
+  batch_size: 64
+  num_workers: 24
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 8
+
+scheduler:
+  _name_: cosine_warmup
+  warmup_fraction: 0.2
+  num_warmup_steps: null
+  num_training_steps: null
+
+trainer:
+  strategy: ddp
+  devices: 4
+  accumulate_grad_batches: 1
+  max_steps: null
+  max_epochs: 50
+  precision: bf16-mixed
+  gradient_clip_val: 0.0
+  log_every_n_steps: 100
+  val_check_interval: 0.25
+

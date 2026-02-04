@@ -1,0 +1,129 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_auto_reg
+  - /task: contrastive
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: contrastive_wrapper
+
+experiment_name: WAV2VEC_xlstm_unet_SEISBENCH
+
+# Contrastive + VQ (SeisLM-style) but with xLSTM U-Net backbone
+model:
+  model_backbone: 'xlstm_unet'
+  # UNet trunk capacity (~11M) with 3 layers per stage
+  # n_layers is the number of blocks per stage; adjust d_model to stay ~11M
+  d_model: 128
+  n_layers: 3
+  expand: 2
+  pool: [4, 4]
+  bidirectional: true
+  use_unet: True
+  
+  dropout: 0.10
+  # mLSTM internals
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 2.0
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+  # TFLA kernels
+  enable_tflakernels: true
+  chunk_size: 128
+  chunkwise_kernel: 'chunkwise--triton_xl_chunk'
+  sequence_kernel: 'native_sequence__triton'
+  step_kernel: 'triton'
+  autocast_kernel_dtype: 'bfloat16'
+  # Contrastive/VQ head
+  final_projection_dim: 256
+  num_negatives: 100
+  temperature: 0.1
+  quantize: true
+  use_mem_eff_path: true
+  only_masked: false
+  quantizer_args:
+    num_codevector_groups: 2
+    num_codevectors_per_group: 320
+    conv_dim: [256]
+    codevector_dim: 256
+    scale_logits_in_quantization: true
+
+train:
+  monitor: val/loss
+  mode: min
+  # SimpleSeqModel expects diversity_lambda here when quantize=True
+  diversity_lambda: 0.1
+  # Manual gradient clipping (SimpleSeqModel.on_before_optimizer_step)
+  clip_grad_norm: 1.0
+  # Gumbel temperature schedule to avoid early hard argmax
+  gumbel_min_temperature: 0.5
+  gumbel_max_temperature: 2.0
+
+optimizer:
+  lr: 0.001
+
+dataset:
+  dataset_name:
+    - ETHZ
+    - GEOFON
+    - STEAD
+    - InstanceCounts
+    - MLAAPDE
+    - Iquique
+    - PNW
+    - OBST2024
+  training_fraction: 1.0
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  norm_type: std
+  wav2vec: true  # ensure no AR targets
+
+encoder:
+  _name_: conv-down-encoder-contrastive
+  kernel_size: 3
+  n_layers: 2
+  dim: 256
+  stride: 2
+  mask_prob: 0.65
+  mask_length: 10
+  mask_channel_prob: 0.0
+  mask_channel_length: 1
+  bert_style: false
+
+decoder:
+  _name_: dummy
+
+loader:
+  batch_size: 64
+  num_workers: 24
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 8
+
+scheduler:
+  _name_: cosine_warmup
+  # Use dynamic step computation in the trainer; warmup as a fraction
+  warmup_fraction: 0.2
+  num_warmup_steps: null
+  num_training_steps: null
+  
+trainer:
+  strategy: ddp
+  devices: 4
+  accumulate_grad_batches: 1
+  max_steps: null
+  max_epochs: 50
+  precision: bf16-mixed
+  # Use manual clipping instead of Lightning's builtin
+  gradient_clip_val: 0.0
+  log_every_n_steps: 100
+  val_check_interval: 0.25
+
+
+

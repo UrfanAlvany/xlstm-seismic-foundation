@@ -1,0 +1,12 @@
+_name_: insight-2
+
+data_dir: 'dataloaders/data/insight'
+data_file: 'dataloaders/data/insight/dataset_prep_faster_32768.pkl'
+window_size_samples: 32768  # 27 minutes at 20Hz
+norm_type: 'std'
+components: 'ZNE'
+fs: 20
+default_uncertainty: 20.0
+overwrite_uncertainties: False
+noise_fraction: 0.5  # +50% noise traces, so 1/3 of the dataset is noise
+num_validation_repeats: 10  # Number of times to repeat validation set for more robust evaluation

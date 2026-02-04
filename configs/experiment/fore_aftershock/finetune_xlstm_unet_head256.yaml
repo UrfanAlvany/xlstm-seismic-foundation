@@ -1,0 +1,66 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: XLSTM_UNET_finetune_foreshock_head256
+
+model:
+  pretrained: CHANGE_ME
+  # Match pretraining internals
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 2.0
+  enable_tflakernels: true
+  mlstm_backend: chunkwise
+  chunk_size: 128
+
+train:
+  monitor: val/loss
+  mode: min
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True
+
+dataset:
+  num_classes: 9
+  batch_size: 16
+  num_workers: 0
+  # SeisLM-style normalization across channels per-timestep
+  demean_axis: -1
+  amp_norm_axis: -1
+  amp_norm_type: std
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  # Project 128 -> 256 before the head to match SeisLM base head width
+  manual_input_dim: 256
+
+optimizer:
+  lr: 4e-4
+  weight_decay: 0.1
+
+scheduler:
+  num_warmup_steps: 0
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: ddp
+  devices: 2
+  max_epochs: 15
+  gradient_clip_val: 0.0
+  val_check_interval: 0.5
+

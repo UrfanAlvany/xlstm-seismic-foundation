@@ -1,0 +1,97 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_phasepick_GEOFON_f020_concat
+
+model:
+  pretrained: final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+  # Fallback instantiate if checkpoint not found
+  _name_: xlstm-unet
+  d_model: 256
+  n_layers: 3
+  pool: [4, 4]
+  expand: 2
+  bidirectional: true
+  use_unet: true
+  dropout: 0.10
+  mlstm_num_heads: 4
+  mlstm_conv1d_kernel_size: 4
+  mlstm_qkv_proj_blocksize: 4
+  mlstm_proj_factor: 2.0
+  ff_proj_factor: 1.6
+  ff_act_fn: gelu
+  enable_tflakernels: true
+  gradient_checkpointing: true
+  fuse_per_block: true
+  chunk_size: 128
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step
+  disable_pretraining: True
+  unfreeze_at_epoch: 6
+  unfrozen_lr_mult: 0.2
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: GEOFON
+  norm_type: std
+  training_fraction: 0.20
+  sigma: 25
+
+encoder:
+  pretrained: True
+
+decoder:
+  _name_: double-conv-phase-pick-concat
+  kernel_size: 3
+  dropout: 0.2
+  manual_input_dim: 256
+  upsample: true
+  upsample_by: 4
+  output_len: 4096
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 2
+
+optimizer:
+  lr: 0.0003
+  weight_decay: 0.1
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  warmup_fraction: 0.1
+  num_training_steps: null
+  num_warmup_steps: null
+
+trainer:
+  max_steps: -1
+  val_check_interval: 0.1
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  max_epochs: 12
+  precision: bf16-mixed
+  enable_model_summary: false
+  log_every_n_steps: 5
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 2
+
+optim:
+  clip_grad_norm: 1.0

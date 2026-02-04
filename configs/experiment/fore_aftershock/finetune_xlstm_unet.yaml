@@ -1,0 +1,70 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: XLSTM_UNET_finetune_foreshock
+
+model:
+  # Set to your contrastive pretrained checkpoint path
+  # Example: wandb_logs/mars/2025-07-07__17_36_30/checkpoints/callback-epoch=46-step=424974.ckpt
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/epoch=39-step=605261.ckpt
+  #freeze: True   # optionally freeze encoder+backbone and unfreeze later
+
+train:
+  monitor: val/loss
+  mode: min
+  # Set >0 to unfreeze backbone+encoder at that epoch (seisLM-style)
+  #unfreeze_at_epoch: 10
+  # Optional L2 regularization toward pretrained weights (seisLM-style ablation)
+  #l2: True
+  #l2_lambda: 0.01
+  # IMPORTANT: using a contrastive pretraining checkpoint; disable pretraining mode for finetune
+  disable_pretraining: true
+  # Disable TFLA/Triton mLSTM kernels to avoid kernel issues on cluster
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True   # match seisLM: freeze feature encoder
+
+dataset:
+  # Choose 2 or 9 depending on your experiment
+  num_classes: 9
+  batch_size: 32
+  num_workers: 0
+  dimension_order: NCW  # Conv1d expects channels-first format
+  # Foreshock configs mimic SeisLM: temporal split, std-norm per channel
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv   # mirrors SeisLM’s DoubleConv head
+  kernel_size: 3
+  dropout: 0.2
+  num_classes: 9
+  manual_input_dim: 128
+
+optimizer:
+  lr: 4e-4           # match seisLM foreshock
+  weight_decay: 0.1  # match seisLM foreshock
+
+# Scheduler is step-based; numbers below mirror Hydras’ finetune templates
+# Adjust if your steps/epoch differ substantially
+scheduler:
+  # Steps are auto-computed if set to 0 (see SimpleSeqModel.configure_optimizers)
+  num_warmup_steps: 0
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 15      # match seisLM foreshock epochs
+  gradient_clip_val: 0.0
+  val_check_interval: 0.5   # validate twice per epoch

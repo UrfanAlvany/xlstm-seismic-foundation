@@ -1,0 +1,7 @@
+_name_: costarica-long-seq
+data_dir: dataloaders/data/costa_rica/small_subset
+sample_len: 65536
+downsample: 100
+bits: 8
+val_split: 0.1
+normalize_per_slice: False

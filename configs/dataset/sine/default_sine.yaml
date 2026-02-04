@@ -1,0 +1,14 @@
+# @package _global_
+dataset:
+  _name_: sine
+  data_dir: dataloaders/data/basic_waveforms/sine_10_2000_hz.npy
+  sample_len: 2048
+  min_freq: 10
+  max_freq: 2_000
+  num_frequencies: 500
+  num_random_amplitudes: 19
+  noise_amplitude: 0.1
+  overwrite_existing_file: False
+  quantize: False
+  bits: 8
+  val_split: 0.1

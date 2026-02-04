@@ -1,0 +1,84 @@
+# @package _global_
+# FULL: End-to-end fine-tuning from the start (no freezing)
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_fine_tune_ETHZ_FULL_seislmStyle_new
+
+model:
+  # IMPORTANT: override this on the CLI to your checkpoint path or folder
+  # Example: model.pretrained=final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-06__22_48_03/checkpoints
+  pretrained: /path/to/your_xlstm_pretrained.ckpt
+
+train:
+  monitor: val/loss
+  mode: min
+  interval: step         # SeisLM-style per-step scheduling
+  unfreeze_at_epoch: 0  # FULL fine-tuning from the start
+  disable_pretraining: True
+
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: ETHZ
+  norm_type: std
+  training_fraction: 1.0
+
+encoder:
+  pretrained: True
+
+decoder:
+  _name_: double-conv-phase-pick
+  upsample: True
+  kernel_size: 3
+  dropout: 0.2
+  upsample_by: 4
+
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 4
+
+optimizer:
+  lr: 2e-4
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  fused: true
+  foreach: false
+
+scheduler:
+  _name_: cosine_warmup
+  # SeisLM-style: derive steps from dataloader × epochs
+  num_warmup_steps: null
+  num_training_steps: null
+  warmup_fraction: 0.1
+
+trainer:
+  max_steps: -1
+  val_check_interval: 0.5
+  devices: 1
+  strategy: auto
+  accelerator: gpu
+  max_epochs: 30
+  precision: bf16-mixed
+  enable_model_summary: false
+  log_every_n_steps: 5
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 2
+
+optim:
+  clip_grad_norm: 1.0
+
+
+#codex resume 0199cacb-c9ef-7250-b821-363f4be49158

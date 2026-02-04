@@ -1,0 +1,3 @@
+_name_: ts2vec
+loss: hierarchical-contrastive-loss
+metrics: hierarchical-contrastive-loss

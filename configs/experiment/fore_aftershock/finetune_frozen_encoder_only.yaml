@@ -1,0 +1,69 @@
+# @package _global_
+# FROZEN ENCODER ONLY - Train decoder from scratch
+# Strategy: Keep pretrained encoder frozen, train only the decoder/classifier head
+# This avoids NaN from problematic pretrained weights in decoder
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: foreshock_aftershock
+  - /task: classification
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+  - /model: xlstm_unet
+
+experiment_name: Pure_mLSTM_foreshock_FROZEN_ENCODER_ONLY
+
+model:
+  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  block_type: mlstm
+  bidirectional: true
+  gradient_checkpointing: false
+  load_decoder: false  # Don't load decoder weights - reinitialize!
+
+train:
+  monitor: val/loss
+  mode: min
+  disable_pretraining: true
+  disable_mlstm_kernels: false
+
+encoder:
+  pretrained: True
+  freeze: True  # KEEP FROZEN PERMANENTLY
+
+dataset:
+  num_classes: 9
+  batch_size: 32  # Larger batch when encoder frozen
+  num_workers: 0
+  dimension_order: NWC
+  demean_axis: 1
+  amp_norm_axis: 1
+
+decoder:
+  _name_: sequence-classifier
+  mode: double-conv
+  kernel_size: 3
+  dropout: 0.3
+  num_classes: 9
+  manual_input_dim: 128
+
+optimizer:
+  lr: 5e-4           # Higher LR since only training decoder
+  weight_decay: 0.05
+  eps: 1e-8
+  betas: [0.9, 0.999]
+  fused: false
+  foreach: false
+
+scheduler:
+  num_warmup_steps: 200
+  num_training_steps: 0
+  warmup_fraction: 0.0
+
+trainer:
+  strategy: auto
+  devices: 1
+  max_epochs: 50
+  gradient_clip_val: 1.0
+  val_check_interval: 0.5
+  precision: bf16-mixed

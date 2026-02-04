@@ -1,0 +1,4 @@
+_name_: costarica-bpe
+data_dir: dataloaders/data/costa_rica/bpe_small/cr_small_bpe_encoded_ids.pt
+sample_len: 65536
+val_split: 0.1

@@ -1,0 +1,69 @@
+# @package _global_
+
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: seisbench_phase
+  - /task: phase_pick
+  - /optimizer: adamw_mamba
+  - /scheduler: cosine_warmup
+
+experiment_name: XLSTM_fine_tune_GEOFON_november
+
+model:
+  # IMPORTANT: override this on the CLI to your checkpoint path
+  # Example: model.pretrained=wandb_logs/mars/2025-10-02__20_54_36/checkpoints/callback-epoch=48-step=8719.ckpt
+  pretrained: final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+
+train:
+  monitor: val/loss
+  mode: min
+  # Freeze encoder+backbone initially, then unfreeze for joint training
+  unfreeze_at_epoch: 8
+  # After unfreezing, use a smaller LR on backbone param groups (applied by callback)
+  unfrozen_lr_mult: 0.1
+  # Use manual gradient clipping in SimpleSeqModel instead of Lightning's
+  clip_grad_norm: 1.0
+  interval: step
+
+dataset:
+  sample_len: 4096
+  bits: 0
+  d_data: 3
+  dataset_name: GEOFON
+  norm_type: std
+  training_fraction: 0.05
+
+encoder:
+  pretrained: True
+
+decoder:
+  _name_: double-conv-phase-pick-concat
+  upsample: True
+  kernel_size: 3
+  dropout: 0.2
+
+loader:
+  batch_size: 64
+  num_workers: 12
+  drop_last: True
+  persistent_workers: True
+
+optimizer:
+  lr: 1e-4
+  weight_decay: 0.05
+
+scheduler:
+  # Dynamic (filled by code from dataloader × epochs)
+  num_warmup_steps: null
+  num_training_steps: null
+  warmup_fraction: 0.2
+
+trainer:
+  max_steps: -1
+  max_epochs: 40
+  precision: bf16-mixed
+  accumulate_grad_batches: 2
+  # Disable Lightning's built-in gradient clipping to avoid double clipping
+  gradient_clip_val: 0.0
+  val_check_interval: 0.5  # validate mid-epoch to pick early best checkpoint

@@ -1,0 +1,8 @@
+_name_: audio-dataset
+data_dir: dataloaders/data/audio
+sample_len: 8192
+sample_rate: 44100
+channels: 1
+auto_reg: False
+return_labels: False
+val_split: 0.1
