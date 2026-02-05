@@ -982,7 +982,10 @@ class PatchPhasePickDecoder(nn.Module):
 
 
 dec_registry = {
+    # No-op decoder (kept for backwards compatibility)
     'dummy': DummyDecoder,
+    'noop': DummyDecoder,
+    'identity': DummyDecoder,
     'linear': LinearDecoder,
     'transformer': SigDecoder,
     's4-decoder': S4Decoder,

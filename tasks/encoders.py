@@ -848,7 +848,10 @@ class PatchEncoder(nn.Module):
         
 
 enc_registry = {
+    # No-op encoder (kept for backwards compatibility)
     'dummy': DummyEncoder,
+    'noop': DummyEncoder,
+    'identity': DummyEncoder,
     'linear': LinearEncoder,
     'layernorm': LayerNormLinearEncoder,
     'mlp': MLPEncoder,

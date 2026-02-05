@@ -32,10 +32,10 @@ model:
   step_kernel: triton
   autocast_kernel_dtype: bfloat16
   gradient_checkpointing: false
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/epoch=39-step=605261.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 encoder:
-  pretrained: true
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   freeze: true
 
 decoder:
@@ -48,7 +48,7 @@ decoder:
 
 dataset:
   _name_: foreshock-aftershock
-  data_dir: /scicore/home/dokman0000/alvani0000/seis_data
+  data_dir: ${oc.env:SEIS_DATA_DIR,null}  # or set directly here
   num_classes: 9
   batch_size: 32
   event_split_method: temporal

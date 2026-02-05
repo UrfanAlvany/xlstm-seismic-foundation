@@ -96,7 +96,7 @@ encoder:
   bert_style: false
 
 decoder:
-  _name_: dummy
+  _name_: noop
 
 loader:
   batch_size: 64
@@ -109,7 +109,7 @@ loader:
 scheduler:
   _name_: cosine_warmup
   # Use dynamic step computation in the trainer; warmup as a fraction
-  warmup_fraction: 0.2
+  warmup_fraction: 0.1
   num_warmup_steps: null
   num_training_steps: null
   
@@ -124,6 +124,4 @@ trainer:
   gradient_clip_val: 0.0
   log_every_n_steps: 100
   val_check_interval: 0.25
-
-
 

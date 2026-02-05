@@ -1,0 +1,14 @@
+# AdamW settings used across many SeisLM-style configs in this repo.
+# Kept as a separate optimizer preset so experiment yamls can simply do:
+#   defaults: - /optimizer: adamw_mamba
+#
+# Note: `fused`/`foreach` are optional and handled robustly in `simple_train.py`
+# (it falls back automatically if the local torch build does not support `fused=True`).
+_name_: adamw
+lr: 0.001
+weight_decay: 0.1
+betas: [0.9, 0.95]
+eps: 1.0e-08
+fused: true
+foreach: false
+

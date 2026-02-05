@@ -11,8 +11,9 @@ defaults:
 experiment_name: XLSTM_phasepick_ETHZ_SeisLMStyle
 
 model:
-  # Best pretraining checkpoint (by val/loss)
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+  # Path to a contrastive-pretrained checkpoint (set via CLI for reproducibility):
+  #   python simple_train.py experiment=phase_picking/fine_tune_xlstm_ethz_seislm model.pretrained=/path/to/pretrained.ckpt
+  pretrained: null
 
 train:
   monitor: val/loss

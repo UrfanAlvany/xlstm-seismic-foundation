@@ -15,7 +15,7 @@ defaults:
 experiment_name: XLSTM_UNET_finetune_foreshock_unfreeze_conservative
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/epoch=39-step=605261.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 train:
   monitor: val/loss
@@ -26,7 +26,7 @@ train:
   disable_mlstm_kernels: false
 
 encoder:
-  pretrained: True
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   freeze: True   # Start frozen, will unfreeze at epoch 8
 
 dataset:

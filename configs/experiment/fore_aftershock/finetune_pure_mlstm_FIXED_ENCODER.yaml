@@ -15,7 +15,7 @@ defaults:
 experiment_name: Pure_mLSTM_finetune_foreshock_FIXED_ENCODER
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   block_type: mlstm
   bidirectional: true
   gradient_checkpointing: true
@@ -26,7 +26,7 @@ model:
 # CRITICAL: Must use bidir-autoreg-encoder to match pretrained checkpoint!
 encoder:
   _name_: bidir-autoreg-encoder  # THIS WAS MISSING!
-  pretrained: true
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   freeze: true  # Start frozen, unfreeze later
 
 dataset:

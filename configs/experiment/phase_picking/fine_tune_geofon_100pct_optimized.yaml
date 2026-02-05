@@ -12,7 +12,7 @@ defaults:
 experiment_name: XLSTM_phasepick_GEOFON_100pct_optimized
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 dataset:
   sample_len: 4096
@@ -29,7 +29,7 @@ decoder:
   upsample: True
 
 encoder:
-  pretrained: True
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   freeze: true           # keep backbone fixed
 
 

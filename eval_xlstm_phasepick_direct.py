@@ -5,11 +5,15 @@ Bypasses the PhasePickerLit wrapper which has issues with xLSTM state_dict loadi
 """
 import sys
 import argparse
+from pathlib import Path
 import torch
 import tempfile
 from omegaconf import OmegaConf
 
-sys.path.insert(0, '/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling')
+# Allow running from outside the repo root (adds repo root to PYTHONPATH).
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from simple_train import SimpleSeqModel
 import evaluation.pick_eval as pe

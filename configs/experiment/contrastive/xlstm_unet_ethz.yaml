@@ -78,7 +78,7 @@ encoder:
   mask_channel_length: 1
 
 decoder:
-  _name_: dummy
+  _name_: noop
 
 loader:
   batch_size: 64

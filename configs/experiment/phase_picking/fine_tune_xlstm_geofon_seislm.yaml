@@ -11,8 +11,9 @@ defaults:
 experiment_name: XLSTM_phasepick_GEOFON_SeisLMStyle_new
 
 model:
-  # Best pretraining checkpoint (by val/loss)
-  pretrained: final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+  # Path to a contrastive-pretrained checkpoint (set via CLI for reproducibility):
+  #   python simple_train.py experiment=phase_picking/fine_tune_xlstm_geofon_seislm model.pretrained=/path/to/pretrained.ckpt
+  pretrained: null
 
 train:
   monitor: val/loss

@@ -14,7 +14,7 @@ defaults:
 experiment_name: XLSTM_fine_tune_CEED_EXACT_MATCH
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 dataset:
   _name_: ethz-phase-pick
@@ -26,7 +26,7 @@ dataset:
   training_fraction: 1.0
 
 encoder:
-  pretrained: true
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 decoder:
   _name_: double-conv-phase-pick

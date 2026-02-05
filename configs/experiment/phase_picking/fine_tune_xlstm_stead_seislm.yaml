@@ -11,8 +11,9 @@ defaults:
 experiment_name: XLSTM_phasepick_STEAD_SeisLMStyle
 
 model:
-  # Best pretraining checkpoint (by val/loss)
-  pretrained: final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+  # Path to a contrastive-pretrained checkpoint (set via CLI for reproducibility):
+  #   python simple_train.py experiment=phase_picking/fine_tune_xlstm_stead_seislm model.pretrained=/path/to/pretrained.ckpt
+  pretrained: null
 
 train:
   monitor: val/loss
@@ -80,4 +81,3 @@ trainer:
 
 optim:
   clip_grad_norm: 1.0
-

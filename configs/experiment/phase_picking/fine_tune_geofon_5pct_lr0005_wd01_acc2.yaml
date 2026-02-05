@@ -12,7 +12,7 @@ defaults:
 experiment_name: XLSTM_phasepick_GEOFON_5pct_lr0005_wd01_acc2
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/wandb_logs/mars/contrastive_resume_58609395.ckpt/checkpoints/callback-epoch=38-step=592102.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 dataset:
   sample_len: 4096
@@ -32,7 +32,7 @@ decoder:
   output_len: 4096
 
 encoder:
-  pretrained: True
+  pretrained: null  # set via CLI: pretrained=/path/to/file
 
 loader:
   batch_size: 64

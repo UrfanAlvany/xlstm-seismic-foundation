@@ -15,7 +15,7 @@ defaults:
 experiment_name: Pure_mLSTM_finetune_foreshock_ULTRA_CONSERVATIVE
 
 model:
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-09-28__18_26_20/checkpoints/callback-epoch=45-step=415932.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   block_type: mlstm  # Pure mLSTM blocks
   bidirectional: true  # Keep bidirectional
   gradient_checkpointing: true  # Enable to save memory
@@ -30,7 +30,7 @@ train:
   disable_mlstm_kernels: false
 
 encoder:
-  pretrained: True
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   freeze: True   # KEEP FROZEN - unfreezing causes NaN at epoch 9!
 
 dataset:

@@ -6,13 +6,16 @@ __pycache__/
 .DS_Store
 outputs/
 wandb_logs/
-checkpoints/
-evaluation_results/
-thesis_plots/
-__pycache__/
-*.pyc
-.DS_Store
-outputs/
-wandb_logs/
 evaluation/eval_tasks/
 
+# Local/dev-only artifacts
+.venv/
+README.md.bak
+.thesis_extracted.txt
+.tmp_preview_dir
+.results_summary.md
+.figure_mapping.tsv
+
+# Private/large inputs (do not commit to public repo)
+Figures copy/
+Urfan_Alvani_thesis-25.pdf

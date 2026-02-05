@@ -67,7 +67,7 @@ model:
   bidirectional: true
   max_seq_len: 4096
   # Resume from previous checkpoint
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-26__22_00_45__j59954914/checkpoints/epoch=6-step=27319.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   # sLSTM hyperparams (used for sLSTM blocks)
   slstm_num_heads: 4
   slstm_conv1d_kernel_size: 4

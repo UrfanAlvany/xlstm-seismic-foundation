@@ -347,8 +347,11 @@ if __name__ == '__main__':
         description='Evaluate xLSTM-UNet on foreshock-aftershock classification (SeisLM-style)'
     )
     parser.add_argument('--ckpt', required=True, help='Path to finetuned foreshock checkpoint (.ckpt)')
-    parser.add_argument('--data_dir', default='/scicore/home/dokman0000/alvani0000/seis_data',
-                        help='Foreshock data directory')
+    parser.add_argument(
+        '--data_dir',
+        default=os.environ.get('SEIS_DATA_DIR'),
+        help='Foreshock data directory (or set env var SEIS_DATA_DIR)',
+    )
     parser.add_argument('--num_classes', type=int, default=9, choices=[2, 4, 8, 9],
                         help='Number of classes (2, 4, 8, or 9)')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for evaluation')
@@ -357,6 +360,9 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Output directory (default: ../evaluation_results/)')
     args = parser.parse_args()
+
+    if not args.data_dir:
+        raise SystemExit("Missing --data_dir (or set SEIS_DATA_DIR).")
 
     evaluate(
         args.ckpt,

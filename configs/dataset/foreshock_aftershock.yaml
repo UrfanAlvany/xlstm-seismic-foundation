@@ -1,6 +1,9 @@
 _name_: foreshock-aftershock
 
-data_dir: "/scicore/home/dokman0000/alvani0000/seis_data"
+# Set this to your local data directory (can also be provided via env var `SEIS_DATA_DIR`).
+# Example:
+#   export SEIS_DATA_DIR=/path/to/seismic/data
+data_dir: ${oc.env:SEIS_DATA_DIR,null}
 num_classes: 2
 batch_size: 16
 event_split_method: 'temporal'

@@ -14,7 +14,7 @@ experiment_name: XLSTM_phasepick_STEAD_resume_10more
 
 model:
   _name_: xlstm-unet
-  pretrained: /scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-26__22_00_11__j59954913/checkpoints/epoch=24-step=101922.ckpt
+  pretrained: null  # set via CLI: pretrained=/path/to/file
   d_model: 12
   n_layers: 3
   pool: [4, 4]

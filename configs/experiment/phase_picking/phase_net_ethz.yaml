@@ -20,14 +20,13 @@ dataset:
   d_data: 3
 
 encoder:
-  _name_: dummy
+  _name_: noop
 
 decoder:
-  _name_: dummy
+  _name_: noop
 
 loader:
   batch_size: 256
 
 trainer:
   max_epochs: 100
-

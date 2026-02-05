@@ -1,115 +1,54 @@
-from pathlib import Path
-import os, sys
-# Allow running from either project root (python -m evaluation.my_evaluation)
-# or from the evaluation/ directory (python my_evaluation.py)
+import argparse
+import os
+import sys
+
+import numpy as np
+
+# Allow running from either project root (`python -m evaluation.my_evaluation`)
+# or from the `evaluation/` directory (`python my_evaluation.py`).
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from evaluation.pick_eval import (
+from evaluation.pick_eval import (  # noqa: E402
     get_results_event_detection,
     get_results_phase_identification,
-    get_results_onset_determination
+    get_results_onset_determination,
 )
-import numpy as np
 
-def evaluate_model(model_name, task1_path, task23_path):
-    """Evaluate a single model using friend's functions"""
-    print(f"\n🎯 {model_name} Results:")
-    print("=" * 50)
 
-    # 1. Event Detectaon (earthquake vs noise)
-    detection = get_results_event_detection(task1_path)
-    print(f"📊 Event Detection AUC: {detection['auc']:.4f}")
+def evaluate_from_csv(task1_csv: str, task23_csv: str) -> dict:
+    detection = get_results_event_detection(task1_csv)
+    phase = get_results_phase_identification(task23_csv)
+    onset = get_results_onset_determination(task23_csv)
 
-    # 2. Phase Identification (P vs S)
-    phase = get_results_phase_identification(task23_path)
-    print(f"📊 Phase Identification AUC: {phase['auc']:.4f}")
-
-    # 3. Onset Determination (timing)
-    onset = get_results_onset_determination(task23_path)
-    p_rmse = np.sqrt(np.mean(onset['P_onset_diff']**2))
-    s_rmse = np.sqrt(np.mean(onset['S_onset_diff']**2))
-    print(f"📊 P-wave RMSE: {p_rmse:.4f}s")
-    print(f"📊 S-wave RMSE: {s_rmse:.4f}s")
+    p_rmse = float(np.sqrt(np.mean(onset["P_onset_diff"] ** 2)))
+    s_rmse = float(np.sqrt(np.mean(onset["S_onset_diff"] ** 2)))
 
     return {
-        'detection_auc': detection['auc'],
-        'phase_auc': phase['auc'],
-        'p_rmse': p_rmse,
-        's_rmse': s_rmse
+        "event_auc": float(detection["auc"]),
+        "phase_auc": float(phase["auc"]),
+        "p_rmse_s": p_rmse,
+        "s_rmse_s": s_rmse,
     }
 
-def main():
-    """Main evaluation function"""
 
-    # File paths for both models
-    models = {
-        "287k Bidirectional xLSTM": {
-            "task1": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-07-28__21_57_56/evals/eval_ETHZ/test_task1.csv"
-            ),
-            "task23": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-07-28__21_57_56/evals/eval_ETHZ/test_task23.csv"
-            )
-        },
-        "270k Unidirectional xLSTM": {
-            "task1": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-07-28__22_00_54/evals/eval_ETHZ/test_task1.csv"
-            ),
-            "task23": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-07-28__22_00_54/evals/eval_ETHZ/test_task23.csv"
-            )
-        },
-        # Added: mLSTM sequential pretraining (20% ETHZ fine-tune)
-        "mLSTM sequential pretraining 20%": {
-            "task1": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-10-07__10_24_49/evals/eval_ETHZ/test_task1.csv"
-            ),
-            "task23": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-10-07__10_24_49/evals/eval_ETHZ/test_task23.csv"
-            )
-        },
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Evaluate phase-picking metrics from SeisBench CSV exports (task1 + task23)."
+    )
+    parser.add_argument("--task1_csv", required=True, help="CSV path for event detection (task1).")
+    parser.add_argument("--task23_csv", required=True, help="CSV path for phase ID + onset (task23).")
+    parser.add_argument("--name", default="model", help="Label for printing.")
+    args = parser.parse_args()
 
-        "mLSTM sequential pretraining nounfreeze 20%": {
-            "task1": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-10-09__00_17_57/evals/eval_ETHZ/test_task1.csv"
-            ),
-            "task23": (
-                "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/"
-                "wandb_logs/mars/2025-10-09__00_17_57/evals/eval_ETHZ/test_task23.csv"
-            )
-        }
-    }
+    metrics = evaluate_from_csv(args.task1_csv, args.task23_csv)
+    print(f"\n{args.name}")
+    print("=" * len(args.name))
+    print(f"Event detection AUC: {metrics['event_auc']:.4f}")
+    print(f"Phase identification AUC: {metrics['phase_auc']:.4f}")
+    print(f"P-onset RMSE (s): {metrics['p_rmse_s']:.4f}")
+    print(f"S-onset RMSE (s): {metrics['s_rmse_s']:.4f}")
 
-    # Evaluate all models
-    results = {}
-    for model_name, paths in models.items():
-        try:
-            results[model_name] = evaluate_model(
-                model_name,
-                paths["task1"],
-                paths["task23"]
-            )
-        except Exception as e:
-            print(f"❌ Error evaluating {model_name}: {e}")
-
-    # Summary comparison
-    print("\n" + "=" * 60)
-    print("📈 SUMMARY COMPARISON")
-    print("=" * 60)
-    for model_name, metrics in results.items():
-        print(f"\n🔹 {model_name}:")
-        print(f"   Detection AUC: {metrics['detection_auc']:.4f}")
-        print(f"   Phase ID AUC: {metrics['phase_auc']:.4f}")
-        print(f"   P-wave RMSE: {metrics['p_rmse']:.4f}s")
-        print(f"   S-wave RMSE: {metrics['s_rmse']:.4f}s")
 
 if __name__ == "__main__":
     main()
