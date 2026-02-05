@@ -40,7 +40,7 @@ Key contributions:
 ### Pretraining
 
 **mLSTM-CR-large (Contrastive + VQ):**
-- **8 datasets**: ETHZ, GEOFON, STEAD, INSTANCE, MLAAPDE, Iquique, PNW, OBST2024
+- **8 datasets**: ETHZ, GEOFON, STEAD, InstanceCounts, MLAAPDE, Iquique, PNW, OBST2024
 - **Objective**: InfoNCE contrastive loss + Gumbel-Softmax VQ + diversity regularizer
 - **Quantizer**: 2 groups × 320 codewords = 640 codes, ~510 perplexity (80% usage)
 - **Key hyperparameters (thesis)**: `lr=1e-3`, cosine schedule with warmup; Gumbel temperature anneal `2.0 → 0.5`; span masking `p=0.65`, `mask_length=10`
@@ -142,8 +142,10 @@ conda activate wavexlstm
 pip install torch==2.1.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # Install dependencies
-pip install pytorch-lightning hydra-core wandb seisbench
-pip install einops triton
+pip install -r requirements.txt
+
+# Optional extras (needed only for some loaders/plots/baselines)
+pip install -r requirements-optional.txt
 ```
 
 ### 2. Install xLSTM with TFLA Kernels
@@ -154,17 +156,20 @@ pip install xlstm
 
 # Optional: install the TFLA/`mlstm_kernels` backend for faster mLSTM kernels.
 # If it isn't installed, the code falls back to the pure-PyTorch backend automatically.
+# See upstream install instructions:
+#   https://github.com/NX-AI/mlstm_kernels
+#   https://github.com/NX-AI/tfla
 ```
 
 ### 3. Download SeisBench Datasets
 
-```python
-import seisbench.data as sbd
+```bash
+# Where SeisBench stores data (optional; default is ~/seis_data)
+export SEISBENCH_DATA=~/seis_data
 
-# Download pretraining datasets (run once)
-datasets = ['ethz', 'geofon', 'stead', 'instance', 'iquique', 'pnw']
-for name in datasets:
-    data = sbd.WaveformDataset(name, download=True)
+# Download the datasets used by the thesis contrastive pretraining config
+python scripts/install_seisbench_datasets.py \
+  ETHZ GEOFON STEAD InstanceCounts MLAAPDE Iquique PNW OBST2024
 ```
 
 ### 4. Run Experiments
@@ -174,6 +179,13 @@ for name in datasets:
 python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
     trainer.devices=4 \
     trainer.max_epochs=50
+```
+
+If you don't have a GPU, override the trainer defaults:
+
+```bash
+python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
+    trainer.accelerator=cpu trainer.devices=1 trainer.precision=32-true
 ```
 
 **Fine-tune on Phase Picking:**
@@ -252,9 +264,10 @@ python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
     loader.batch_size=64
 
 # Foreshock classification
+export SEIS_DATA_DIR=/path/to/your/foreshock/data
 python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \
     model.pretrained=/path/to/pretrained.ckpt \
-    dataset.data_dir=${SEIS_DATA_DIR}
+    trainer.max_epochs=15
 
 # Debug run (fast iteration)
 python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \

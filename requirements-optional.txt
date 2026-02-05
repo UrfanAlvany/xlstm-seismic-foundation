@@ -1,0 +1,2 @@
+obspy>=1.4
+mamba-ssm
