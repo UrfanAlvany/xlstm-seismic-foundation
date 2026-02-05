@@ -1,6 +1,6 @@
 {
   "callback-epoch=6-step=1137.ckpt": {
-    "checkpoint": "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-24__22_05_45__j59832701/checkpoints/callback-epoch=6-step=1137.ckpt",
+    "checkpoint": "REDACTED_PATH",
     "test_loss": 1.0037380658974082,
     "test_accuracy": 0.6679221594475832,
     "num_samples": 1593,
@@ -219,7 +219,7 @@
     ]
   },
   "epoch=14-step=2537.ckpt": {
-    "checkpoint": "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-24__22_05_45__j59832701/checkpoints/epoch=14-step=2537.ckpt",
+    "checkpoint": "REDACTED_PATH",
     "test_loss": 1.5401359727677504,
     "test_accuracy": 0.6917765222849969,
     "num_samples": 1593,

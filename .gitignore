@@ -10,6 +10,8 @@ evaluation/eval_tasks/
 
 # Local/dev-only artifacts
 .venv/
+.claude/
+**/.claude/
 README.md.bak
 .thesis_extracted.txt
 .tmp_preview_dir

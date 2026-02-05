@@ -1,7 +1,7 @@
 {
   "mLSTM Sequential": {
     "experiment": "mLSTM Sequential",
-    "checkpoint": "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-11-07__16_07_21__j60878640/checkpoints/bestacc-epoch=32-step=1451.ckpt",
+    "checkpoint": "REDACTED_PATH",
     "test_loss": 0.8721573281348014,
     "test_accuracy": 0.6716886377903327,
     "test_accuracy_pct": 67.16886377903327,
@@ -224,7 +224,7 @@
   },
   "mLSTM CR": {
     "experiment": "mLSTM CR",
-    "checkpoint": "/scicore/home/dokman0000/alvani0000/final_seismology/seismic_data_modeling/wandb_logs/mars/2025-10-24__22_36_42__j59833151/checkpoints/epoch=29-step=5162.ckpt",
+    "checkpoint": "REDACTED_PATH",
     "test_loss": 1.387297461074774,
     "test_accuracy": 0.7696170747018205,
     "test_accuracy_pct": 76.96170747018205,
