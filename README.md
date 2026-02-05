@@ -393,6 +393,10 @@ Please also cite the foundational works:
 
 - **Till Muser** — PhD Candidate, University of Basel (UniBas) — Master's thesis supervisor
 
+### Computational resources
+
+- **SciCORE (University of Basel)** — support and HPC resources used for training and evaluation runs
+
 ### Upstream code & licenses
 
 This repository depends on and/or was implemented using the following open-source projects. Please make sure you comply with their licenses when redistributing code or trained artifacts (license metadata checked via GitHub API on 2026-02-05):
