@@ -131,8 +131,8 @@ Key contributions:
 ### 1. Clone and Setup Environment
 
 ```bash
-# Clone the repository, then `cd` into it
-# (shown here without a hard-coded URL so the README stays correct after forks/renames)
+git clone https://github.com/UrfanAlvany/xlstm-seismic-foundation.git
+cd xlstm-seismic-foundation
 
 # Create conda environment
 conda create -n wavexlstm python=3.10
@@ -196,7 +196,7 @@ python simple_train.py experiment=fore_aftershock/finetune_xlstm_unet \
 ## Project Structure
 
 ```
-thesis_seismology/
+xlstm-seismic-foundation/
 ├── simple_train.py              # Main training script (PyTorch Lightning)
 ├── configs/
 │   ├── experiment/              # Experiment configurations
