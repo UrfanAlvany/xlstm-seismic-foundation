@@ -181,6 +181,8 @@ python simple_train.py experiment=contrastive/xlstm_unet_seisbench \
     trainer.max_epochs=50
 ```
 
+Expected during **contrastive** pretraining: logs/metrics will include `contrastive_loss` (and `diversity_loss` / codebook perplexity when VQ is enabled). This is correct for the Wav2Vec/SeisLM-style objective.
+
 If you don't have a GPU, override the trainer defaults:
 
 ```bash
