@@ -399,13 +399,10 @@ Please also cite the foundational works:
 
 ### Upstream code & licenses
 
-This repository depends on and/or was implemented using the following open-source projects. Please make sure you comply with their licenses when redistributing code or trained artifacts (license metadata checked via GitHub API on 2026-02-05):
+This repository uses or references the following upstream projects. Please follow each upstream license when redistributing code or artifacts:
 
 - **[SeisBench](https://github.com/seisbench/seisbench)** — GNU GPL v3.0
 - **[xLSTM](https://github.com/NX-AI/xlstm)** — Apache License 2.0
-- **[`mlstm_kernels`](https://github.com/NX-AI/mlstm_kernels)** — license classified by GitHub as “Other” (verify in the upstream repo); optional performance backend only (not vendored here)
-- **[TFLA](https://github.com/NX-AI/tfla)** — no license detected via GitHub API at time of writing; optional performance backend only (not vendored here)
-- **[SeisLM](https://github.com/liutianlin0121/seisLM)** — no license detected via GitHub API at time of writing; referenced as a baseline/related work (no code vendored here)
 
 ### Tools and libraries
 
